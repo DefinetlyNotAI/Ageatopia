@@ -17,6 +17,7 @@ type Tab = typeof TABS[number];
 export default function Dashboard() {
   const [system, setSystem] = useState<System | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
+  const [deletedRuns, setDeletedRuns] = useState<Run[]>([]);
   const [selected, setSelected] = useState("");
   const [run, setRun] = useState<Run | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
@@ -37,10 +38,11 @@ export default function Dashboard() {
   const [replaySpeed, setReplaySpeed] = useState(4);
 
   const refresh = useCallback(async () => {
-    const [health, worlds, saved] = await Promise.all([
-      api<System>("/system"), api<Run[]>("/runs"), api<Record<string, Config>>("/presets"),
+    const [health, worlds, saved, deleted] = await Promise.all([
+      api<System>("/system"), api<Run[]>("/runs"), api<Record<string, Config>>("/presets"), api<Run[]>("/runs?deleted=true"),
     ]);
     setSystem(health); setRuns(worlds); setPresets(saved);
+    setDeletedRuns(deleted);
     setConfig(current => current || health.defaults);
     setSelected(current => current || worlds[0]?.id || "");
   }, []);
@@ -135,6 +137,25 @@ export default function Dashboard() {
     catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
 
+  async function deleteWorld() {
+    if (!run) return;
+    setBusy(true); setError("");
+    try {
+      await api(`/runs/${run.id}`, "DELETE");
+      setNotice(`Deleted “${run.name}”. Restore it from Deleted worlds.`);
+      setSelected(""); setRun(null); setEvents([]); setAnalytics(null); setReplay(null); setPlaying(false);
+      await refresh();
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+
+  async function restoreWorld(id: string) {
+    setBusy(true); setError("");
+    try {
+      await api(`/runs/${id}/restore`, "POST");
+      setSelected(id); setNotice("World restored"); await refresh();
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+
   const living = run?.agents.filter(a => a.state !== "TERMINATED") || [];
   const completed = run?.tasks.filter(t => t.status === "COMPLETED").length || 0;
   const failed = run?.tasks.filter(t => t.status === "FAILED").length || 0;
@@ -151,7 +172,12 @@ export default function Dashboard() {
       <div className="world-list">{runs.map(world => <button key={world.id} className={selected === world.id ? "selected" : ""}
         onClick={() => { setRun(null); setEvents([]); setAnalytics(null); setSelected(world.id); setShowSetup(false); setReplayTime(0); setPlaying(false); }}>
         <strong>{world.name}</strong><span>{world.status.toLowerCase()} · {duration(world.sim_ms)}</span></button>)}</div>
-      <div className="system-status"><h3>Infrastructure</h3><p><i className={system?.docker_ready ? "online" : ""} />Docker {system?.docker_ready ? "ready" : "unavailable"}</p>
+      {deletedRuns.length > 0 && <details><summary>Deleted worlds · {deletedRuns.length}</summary>
+        <div className="world-list">{deletedRuns.map(world => <div key={world.id}><strong>{world.name}</strong>
+          <button disabled={busy} onClick={() => void restoreWorld(world.id)}>Restore</button></div>)}</div>
+      </details>}
+      <div className="system-status"><h3>Infrastructure</h3><p><i className={system?.docker_ready ? "online" : ""} />Docker {system?.docker_ready ? "ready" : system?.docker_installed ? "engine unavailable" : "not installed"}</p>
+        {system?.docker_error && <small>{system.docker_error}</small>}
         <p><i className={system?.models.length ? "online" : ""} />Ollama {system?.models.length ? "connected" : "unavailable"}</p>
         <small>{system?.models.length || 0} installed models</small></div>
     </aside><main>
@@ -162,7 +188,7 @@ export default function Dashboard() {
         <span className="eyebrow">AGENT UTOPIA</span><h2>A world, ready to observe.</h2>
         <p>Create a local world to begin. Agents act independently; the observatory records their experience.</p>
         <button className="primary" onClick={() => setShowSetup(true)}>Create the first world</button>
-        {!system?.docker_ready && <p className="muted">Docker is required for all agent execution. Install Docker Desktop and build the world image before starting a run.</p>}
+        {!system?.docker_ready && <p className="muted">Docker is required for all agent execution. {system?.docker_installed ? "Start Docker Desktop" : "Install Docker Desktop"} and build the world image before starting a run.</p>}
       </div> : <>
         <div className="run-heading"><div><span className="eyebrow">RUN {run.id.slice(0, 8)} · RULES V{run.economy_version}</span><h1>{run.name}</h1>
           <p className="muted">{run.status.toLowerCase()} · simulated {duration(run.sim_ms)} · actual {duration(run.wall_elapsed_ms)}</p></div>
@@ -171,6 +197,7 @@ export default function Dashboard() {
             {run.status === "PAUSED" && <button className="primary" disabled={busy} onClick={() => void act("resume")}>Resume</button>}
             {["CREATED", "RUNNING", "PAUSED"].includes(run.status) && <button className="danger" disabled={busy} onClick={() => void act("terminate")}>Terminate</button>}
             <button disabled={busy} onClick={() => void repeat()}>Repeat conditions</button>
+            <button className="danger" disabled={busy || run.status === "RUNNING"} onClick={() => void deleteWorld()}>Delete world</button>
             <details className="exports"><summary>Export</summary><div>{["json", "csv", "parquet"].map(format =>
               <a key={format} href={`/api/runs/${run.id}/export/${format}`}>{format.toUpperCase()}</a>)}
               <a href={`/api/runs/${run.id}/training-data`}>Public training trajectories</a></div></details></div></div>
@@ -254,6 +281,7 @@ function WorldSetup({ config, setConfig, system, presets, busy, onSubmit, savePr
       <label>Respawn delay (minutes)<input type="number" min="0" step="0.1" value={config.economy.respawn_delay_ms / 60000} onChange={e => setConfig({ ...config, economy: { ...config.economy, respawn_delay_ms: Number(e.target.value)*60000 } })} /></label>
       <label className="checkbox"><input type="checkbox" checked={config.model.thinking} onChange={e => setConfig({ ...config, model: { ...config.model, thinking: e.target.checked } })} />Provider thinking</label>
       <label className="checkbox"><input type="checkbox" checked={config.exclude_queue_wait} onChange={e => setConfig({ ...config, exclude_queue_wait: e.target.checked })} />Exclude GPU queue waits from lifetimes</label></div>
+    <details><summary>Base system instructions</summary><label>System prompt<textarea rows={9} value={config.base_context} onChange={e => setConfig({ ...config, base_context: e.target.value })} /></label></details>
     <h2>Context profiles</h2>{config.contexts.map((profile, index) => <div className="context-row" key={index}><label>Profile name<input value={profile.name} onChange={e => setConfig({ ...config, contexts: config.contexts.map((p, i) => i === index ? { ...p, name: e.target.value } : p) })} /></label>
       <label>Instructions<textarea rows={3} value={profile.instructions} onChange={e => setConfig({ ...config, contexts: config.contexts.map((p, i) => i === index ? { ...p, instructions: e.target.value } : p) })} /></label>
       {config.contexts.length > 1 && <button type="button" onClick={() => setConfig({ ...config, contexts: config.contexts.filter((_, i) => i !== index) })}>Remove</button>}</div>)}

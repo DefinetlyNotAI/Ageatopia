@@ -4,6 +4,7 @@ export type ModelSettings = {
 };
 export type Config = {
   name: string; seed: number; population: number; task_count: number; impossible_fraction: string;
+  base_context: string;
   cyber_fraction: string; clock_mode: "wall" | "deterministic"; clock_speed: number;
   tick_ms: number; inference_concurrency: number; exclude_queue_wait: boolean;
   model: ModelSettings; contexts: { name: string; instructions: string; knowledge: string; version: string; model: ModelSettings | null }[];

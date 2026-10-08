@@ -72,3 +72,51 @@ def test_start_without_docker_fails_closed_and_does_not_terminate(tmp_path, monk
         state = client.get(f"/runs/{identity}", headers=HEADERS).json()
         assert state["status"] == "CREATED"
         assert all(a["state"] != "TERMINATED" for a in state["agents"])
+
+
+def test_world_delete_is_recoverable_and_preserves_events_after_restart(tmp_path):
+    app = create_app(tmp_path, token="test-operator")
+    with TestClient(app) as client:
+        world = client.post("/runs", headers=HEADERS, json={}).json()
+        identity = world["id"]
+        original = client.get(f"/runs/{identity}/events", headers=HEADERS).json()
+        assert client.delete(f"/runs/{identity}", headers=HEADERS).status_code == 200
+        assert client.get("/runs", headers=HEADERS).json() == []
+        assert client.get(f"/runs/{identity}", headers=HEADERS).status_code == 404
+        assert client.get("/runs?deleted=true", headers=HEADERS).json()[0]["id"] == identity
+    with TestClient(create_app(tmp_path, token="test-operator")) as client:
+        assert client.post(f"/runs/{identity}/restore", headers=HEADERS).status_code == 200
+        assert client.get("/runs", headers=HEADERS).json()[0]["id"] == identity
+        records = client.get(f"/runs/{identity}/events", headers=HEADERS).json()
+        assert records[: len(original)] == original
+        assert {"run.deleted", "run.restored"} <= {record["kind"] for record in records}
+
+
+def test_running_world_must_be_paused_before_delete(tmp_path):
+    app = create_app(tmp_path, token="test-operator")
+    with TestClient(app) as client:
+        identity = client.post("/runs", headers=HEADERS, json={}).json()["id"]
+        app.state.engines[identity].control("start")
+        assert client.delete(f"/runs/{identity}", headers=HEADERS).status_code == 409
+        assert client.get(f"/runs/{identity}", headers=HEADERS).json()["status"] == "RUNNING"
+        client.post(f"/runs/{identity}/control/pause", headers=HEADERS)
+        assert client.delete(f"/runs/{identity}", headers=HEADERS).status_code == 200
+
+
+def test_docker_startup_error_with_zero_cli_exit_is_not_ready(tmp_path, monkeypatch):
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            return b"\n", b"Error response from daemon: Docker Desktop is unable to start\n"
+
+    async def create_process(*args, **kwargs):
+        return Process()
+
+    monkeypatch.setattr("utopia.api.shutil.which", lambda _: "docker.exe")
+    monkeypatch.setattr("utopia.api.asyncio.create_subprocess_exec", create_process)
+    with TestClient(create_app(tmp_path, token="test-operator")) as client:
+        result = client.get("/system", headers=HEADERS).json()
+        assert result["docker_installed"]
+        assert not result["docker_ready"]
+        assert "unable to start" in result["docker_error"]

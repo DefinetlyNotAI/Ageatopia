@@ -48,7 +48,10 @@ def create_app(directory=None, store=None, token=None):
     @asynccontextmanager
     async def lifespan(app):
         for engine in engines.values():
-            if engine.state["status"] not in {"TERMINATED", "COMPLETED"}:
+            if not engine.state.get("deleted") and engine.state["status"] not in {
+                "TERMINATED",
+                "COMPLETED",
+            }:
                 engine.recover()
         yield
         for runtime in runtimes.values():
@@ -78,8 +81,8 @@ def create_app(directory=None, store=None, token=None):
 
     protected = [Depends(authenticate)]
 
-    def lookup(run_id):
-        if run_id not in engines:
+    def lookup(run_id, include_deleted=False):
+        if run_id not in engines or (engines[run_id].state.get("deleted") and not include_deleted):
             raise HTTPException(404, "Run not found")
         return engines[run_id]
 
@@ -114,9 +117,16 @@ def create_app(directory=None, store=None, token=None):
                 stderr=asyncio.subprocess.PIPE,
             )
             try:
-                _, stderr = await asyncio.wait_for(process.communicate(), 5)
-                docker_ready = process.returncode == 0
-                docker_error = stderr.decode(errors="replace")[:400] if not docker_ready else None
+                stdout, stderr = await asyncio.wait_for(process.communicate(), 5)
+                docker_ready = process.returncode == 0 and bool(stdout.strip())
+                docker_error = (
+                    (
+                        stderr.decode(errors="replace")[:400].strip()
+                        or "Docker daemon did not return its identity"
+                    )
+                    if not docker_ready
+                    else None
+                )
             except TimeoutError:
                 process.kill()
                 await process.wait()
@@ -140,8 +150,37 @@ def create_app(directory=None, store=None, token=None):
         }
 
     @app.get("/runs", dependencies=protected)
-    async def list_runs():
-        return [engine.summary() for engine in reversed(list(engines.values()))]
+    async def list_runs(deleted: bool = False):
+        return [
+            engine.summary()
+            for engine in reversed(list(engines.values()))
+            if bool(engine.state.get("deleted")) == deleted
+        ]
+
+    @app.delete("/runs/{run_id}", dependencies=protected)
+    async def delete_run(run_id: str):
+        async with control_lock:
+            engine = lookup(run_id)
+            if engine.state["status"] == "RUNNING":
+                raise ValueError("Pause or terminate the run before deleting it")
+            if run_id in runtimes:
+                await runtimes[run_id].close()
+                del runtimes[run_id]
+            with engine.transaction():
+                engine.state["deleted"] = True
+                engine.emit("run.deleted", {"recoverable": True})
+            return {"id": run_id, "deleted": True, "recoverable": True}
+
+    @app.post("/runs/{run_id}/restore", dependencies=protected)
+    async def restore_run(run_id: str):
+        async with control_lock:
+            engine = lookup(run_id, include_deleted=True)
+            if not engine.state.get("deleted"):
+                raise ValueError("World is not deleted")
+            with engine.transaction():
+                engine.state["deleted"] = False
+                engine.emit("run.restored", {})
+            return engine.summary()
 
     @app.post("/runs", dependencies=protected, status_code=201)
     async def create_run(config: WorldConfig):
@@ -333,7 +372,7 @@ def create_app(directory=None, store=None, token=None):
 
     @app.get("/comparison", dependencies=protected)
     async def compare():
-        return comparison([e.state for e in engines.values()])
+        return comparison([e.state for e in engines.values() if not e.state.get("deleted")])
 
     @app.get("/runs/{run_id}/analytics", dependencies=protected)
     async def analytics(run_id: str):

@@ -52,6 +52,16 @@ can supply their own `model` settings. `agent_model_overrides` maps zero-based
 population slots to model settings and takes precedence over profiles.
 `context_assignment` supports round-robin or seeded random assignments.
 
+New worlds use a compact system prompt and four round-robin expertise profiles:
+generalist, mathematics, programming and security analysis. The creation form
+exposes the base system instructions directly. Existing worlds and saved presets
+keep their exact original prompts and profiles.
+
+Pause or terminate a running world before using **Delete world**. Deletion removes
+the world from the active list and preserves its database, snapshots and immutable
+events. **Deleted worlds** in the sidebar lets you restore it, including after a
+server restart. This control does not permanently erase research records.
+
 Task counts must represent the requested impossible fraction exactly: the default
 40 tasks contain 36 solvable tasks and four impossible tasks. Difficulty is an
 independent field. The fixed bank requires independently validated private
