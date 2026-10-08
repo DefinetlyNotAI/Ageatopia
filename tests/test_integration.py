@@ -83,6 +83,8 @@ async def test_real_ollama_shared_model_tool_call():
             TOOLS,
         )
         assert result.message["tool_calls"] and result.tokens > 0
+        first = result.message["tool_calls"][0]["function"]
+        assert first["name"] == "task" and first["arguments"]["operation"] == "request"
     finally:
         await provider.close()
 

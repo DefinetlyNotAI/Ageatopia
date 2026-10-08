@@ -53,8 +53,10 @@ class ToolSettings(StrictModel):
 
 
 BASE_CONTEXT = (
-    "Work in /workspace. Complete the tasks available to you using the provided tools.\n\n"
-    "The task tool lets you request, inspect, skip or submit work. Submit final answers "
+    "Complete tasks using the provided tools. Begin by calling task with operation=request. "
+    "Solve the returned problem. Use /workspace when the task requires files or programs.\n\n"
+    "The task tool lets you request, inspect, skip or submit work. Inspect your current task "
+    "with operation=inspect. Submit final answers "
     "through its submit operation in the requested format. Chat messages are not submissions.\n\n"
     "Working time is limited and passes while you work. Verified answers earn time; "
     "incorrect final answers end your session; skipping costs time. The lifetime tool "
