@@ -48,11 +48,11 @@ browser state or agent prompts. Both servers bind to loopback by default.
 
 1. Configuration, schema and durable events: implemented; automated/API checks pass.
 2. Lifecycle, economy and time: implemented; automated checks pass, including subtick queue accounting.
-3. Autonomous tools, sandbox and grading: implemented; deterministic loop and real Ollama checks pass. Docker runtime gate remains blocked.
+3. Autonomous tools, sandbox and grading: implemented; deterministic loop, real Ollama tool calling and real Docker isolation/recovery/CTF checks pass.
 4. Deterministic task bank and impossibility validation: implemented; generated and fixed-bank checks pass.
 5. Contexts, notebooks and respawning: implemented; automated separation/recovery checks pass.
 6. Dashboard, observation, replay and exports: implemented; browser, API, typecheck, lint and production build checks pass.
-7. Recovery, reproducibility and metrics: implemented; recovery/export tests pass and the local NVIDIA GPU is detected. Full population benchmark remains blocked by Docker.
+7. Recovery, reproducibility and metrics: implemented; recovery/export tests pass and the local NVIDIA GPU is detected. Sustained population benchmarking remains unverified.
 8. Optional offline training and comparison: implemented; public trajectory/comparison checks pass. Actual weight training has not been run.
 
 Real Docker/Ollama acceptance is a separate verification gate. Missing Docker must

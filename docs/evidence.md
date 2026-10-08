@@ -7,12 +7,11 @@ the follow-up below and docker-setup.md describe the current installation.
 
 ## Current result
 
-All eight development phases have application implementations. The complete real
-six-agent acceptance experiment is **not verified**, because its mandatory Docker
-execution environment is unavailable. Docker Desktop is now installed, but its
-engine cannot start with the existing custom WSL kernel. No agent command is executed on the host
-as a substitute. The operator UI returns a clear start failure and leaves the
-world in CREATED state. Actual optional LoRA weight training has not been run.
+All eight development phases have application implementations. Docker Desktop now
+starts on the upgraded custom kernel, and all three real integrations pass,
+including the six-agent task-completion smoke run in 48.53 seconds.
+Full generational acceptance and actual optional LoRA training remain unverified.
+See docker-setup.md for kernel preservation, installation repair, and rollback.
 
 ## Requirement coverage
 
@@ -20,20 +19,21 @@ world in CREATED state. Actual optional LoRA weight training has not been run.
 | --- | --- | --- |
 | 1, 8: agent knowledge and varied contexts | Public allowlists, exact context storage, seeded profile assignment, custom base contexts, model overrides | Automated visibility/context-separation checks; browser inspector shows exact delivered context. Only provider-returned thinking is recorded. |
 | 2: stack and shared inference | FastAPI, Next.js/TypeScript/Tailwind, SQLite WAL, versioned JSON events, Ollama and OpenAI-compatible provider | Backend/API tests, real Ollama manifest and tool-call check, frontend build. Drizzle defines mirrored tables/migrations; Python transactions use SQLAlchemy as explained in architecture.md. OpenAI-compatible backend not tested live. |
-| 3, 4: lifecycle, clocks and economics | Integer milliseconds, one atomic engine transaction per action, queue policy, pause/recovery, termination callbacks, configurable replacement delay | Tests cover all specified economic/lifecycle cases, concurrent/duplicate submissions, rollback, queue cancellation and subtick transitions. Five-minute default resolves the plan conflict. Docker process termination still needs real integration verification. |
-| 5, 9: tasks and independent grader | Seven math recipes, eight synthetic cyber recipes, inconsistent constraints/unavailable information, deterministic bank validation, private registry, bounded mathematical AST | Tests cover exact distribution, seeded generation, proof policy, malformed vs incorrect vs infrastructure errors, private visibility, and invalid fixed banks. Real CTF execution is blocked by Docker. |
-| 6, 7: shared workspace and general tools | Shared bounded tmpfs, distinct unprivileged UIDs, Docker-only shell/Python/compile/process/service operations, independent filesystem and process observer | Missing-Docker fail-closed test passes. Real integration test is provided for permissions, zero effective capabilities, network isolation, shared artifacts, permanent termination, CTF, observer ACK and workspace restoration; not run here. |
+| 3, 4: lifecycle, clocks and economics | Integer milliseconds, one atomic engine transaction per action, queue policy, pause/recovery, termination callbacks, configurable replacement delay | Tests cover all specified economic/lifecycle cases, concurrent/duplicate submissions, rollback, queue cancellation and subtick transitions. Five-minute default resolves the plan conflict. Real Docker permanent process termination passes. |
+| 5, 9: tasks and independent grader | Seven math recipes, eight synthetic cyber recipes, inconsistent constraints/unavailable information, deterministic bank validation, private registry, bounded mathematical AST | Tests cover exact distribution, seeded generation, proof policy, malformed vs incorrect vs infrastructure errors, private visibility, and invalid fixed banks. Real CTF execution passes. |
+| 6, 7: shared workspace and general tools | Shared bounded tmpfs, distinct unprivileged UIDs, Docker-only shell/Python/compile/process/service operations, independent filesystem and process observer | Missing-Docker fail-closed test and real integration pass: permissions, zero effective capabilities, network isolation, shared artifacts, permanent termination, CTF, observer ACK and workspace restoration. |
 | 10: memory and optional learning | Personal notebook, persistent artifacts, public success-trajectory export, explicit offline LoRA CLI and training event log, adapter/dataset/iteration metadata | Deterministic loop verifies complete public trajectory through the returned verified tool result. Optional training dependencies and GPU training were not exercised; adapters require operator packaging into the chosen backend. |
 | 11, 12: observer and operator UI | Immutable monotonic events, live SSE, detailed agent pages, actual-state overview/task monitor/activity filters, timeline/trend charts, artifact evidence links, controls/presets | API and browser checks pass. Tested create world, save preset, start failure, live feed, task classifications, agent details, analysis, replay, and desktop/mobile layout. Observer save-failure retry/deduplication and error-pause cleanup tests pass. |
 | 13: reproducibility and exports | Seeds/config/digests/context versions, initial/final snapshots, repeated conditions, JSON/CSV/Parquet, recorded-experience replay | Export round trips and API replay/repeat tests pass. Engine reproducibility is deterministic; model inference is explicitly not guaranteed deterministic. |
-| 14: performance | One shared inference semaphore, queue/backpressure metrics, idle-stop policy, conservative context guard, opt-in summarization, NVIDIA metrics, real benchmark CLI | Six independent histories serialize through one worker in tests; context checks include thinking/tool-call payloads. Local GPU detected. Sustained six-agent VRAM/throughput benchmark remains blocked by Docker. No unsupported provider batching claim is made. |
-| 15: tests last | Existing application development was followed by engine/API/runtime tests and opt-in real integrations | 53 passed, 3 opt-in integration tests skipped in the standard suite; separate real Ollama check: 1 passed, 2 deselected. |
+| 14: performance | One shared inference semaphore, queue/backpressure metrics, idle-stop policy, conservative context guard, opt-in summarization, NVIDIA metrics, real benchmark CLI | Six independent histories serialize through one worker in tests; context checks include thinking/tool-call payloads. Local GPU detected. Sustained population VRAM/throughput benchmarking remains unverified. No unsupported provider batching claim is made. |
+| 15: tests last | Existing application development was followed by engine/API/runtime tests and opt-in real integrations | 56 passed, 3 opt-in integrations skipped in the standard suite; all three real integrations pass individually. |
 | 16, 17: phases and real acceptance | Eight phases implemented; acceptance commands and real benchmark supplied | See architecture.md phase ledger. Full real acceptance criteria 1–15 remain an activation gate, not a completed experiment. |
 
 ## Verification commands and results
 
-- `.venv\Scripts\python.exe -m pytest -q`: **53 passed, 3 skipped**.
+- `.venv\Scripts\python.exe -m pytest -q`: **56 passed, 3 skipped**.
 - `UTOPIA_INTEGRATION=1 ... pytest tests/test_integration.py -k real_ollama_shared_model_tool_call -q`: **1 passed**, using the installed Qwen model.
+- Targeted real Docker integration: **1 passed in 7.91 seconds**; real six-agent smoke: **1 passed in 48.53 seconds**.
 - Ruff check and format check across `utopia`, `sandbox`, `tests`: passed.
 - Dashboard `npm run typecheck`, `npm run lint`, `npm run build`: passed.
 - Drizzle migration generation: passed, three tables generated.
@@ -54,12 +54,10 @@ or authorship. Syscall process records and sampled process inventories are
 explicitly different event types. Ordinary process inspection can reveal OS
 instrumentation, although its controls/data remain protected.
 
-To clear the mandatory execution gate, install/start Docker Desktop with Linux
-containers, build `agent-utopia-world:1` from `sandbox`, then run the opt-in real
-integration suite and the sustained population benchmark. The 180-second real
-integration smoke test checks independent task completion; the benchmark and
-exported observations are needed to demonstrate generational behavior and full
-acceptance. No such run or training result is claimed in this document.
+The mandatory Docker execution gate is now verified, and `agent-utopia-world:1`
+has been built. The real six-agent smoke test checks task completion; the sustained
+benchmark and exported observations are still needed to demonstrate generational
+behavior and full acceptance. No sustained benchmark or training result is claimed.
 
 ## Follow-up: 2026-10-09
 
@@ -68,6 +66,13 @@ existing run contexts remain unchanged. Recoverable world deletion/restoration
 preserves immutable events and works after restart. The dashboard exposes the base
 prompt editor and distinguishes a missing Docker installation from a failed engine.
 Docker CLI startup errors with zero exit status are covered by a regression test.
-The updated automated suite passes 56 tests. See docker-setup.md for the installed
-versions and the precise custom-kernel blocker. Real sandbox acceptance remains
-unverified.
+The updated automated suite passes 56 tests. The follow-up kernel repair preserved
+the existing settings, modules and embedded firmware while enabling Docker.
+Real Docker isolation/recovery/CTF integration and real Ollama tool calling pass.
+The first six-agent smoke run paused after Windows Docker CLI processes reported
+out-of-memory errors near the host commit limit; kernel build caches were cleared
+before retrying. Making the initial task request explicit fixed a separate model
+detour through unassigned workspace files. The final six-agent smoke run passed in
+48.53 seconds, including task completion and final workspace capture. All three
+real integrations pass individually; the standard suite passes 56 tests with the
+three integrations skipped by default. Full generational acceptance remains unverified.
