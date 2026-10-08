@@ -1,14 +1,16 @@
 # Implementation and verification evidence
 
-Verified locally on Windows 11 on 2026-10-08. Python 3.14, Node 26.8.1,
+Baseline verified locally on Windows 11 on 2026-10-08. Python 3.14, Node 26.8.1,
 Ollama 0.40.1, and an NVIDIA RTX 3050 Laptop GPU with 6144 MiB VRAM.
-Both Qwen3.5:2B and Qwen3.5:0.8B are installed. Docker is not installed.
+Both Qwen3.5:2B and Qwen3.5:0.8B are installed. Docker was not installed at baseline;
+the follow-up below and docker-setup.md describe the current installation.
 
 ## Current result
 
 All eight development phases have application implementations. The complete real
 six-agent acceptance experiment is **not verified**, because its mandatory Docker
-execution environment is unavailable. No agent command is executed on the host
+execution environment is unavailable. Docker Desktop is now installed, but its
+engine cannot start with the existing custom WSL kernel. No agent command is executed on the host
 as a substitute. The operator UI returns a clear start failure and leaves the
 world in CREATED state. Actual optional LoRA weight training has not been run.
 
@@ -58,3 +60,14 @@ integration suite and the sustained population benchmark. The 180-second real
 integration smoke test checks independent task completion; the benchmark and
 exported observations are needed to demonstrate generational behavior and full
 acceptance. No such run or training result is claimed in this document.
+
+## Follow-up: 2026-10-09
+
+New defaults use a compact, tool-oriented system prompt and four expertise profiles;
+existing run contexts remain unchanged. Recoverable world deletion/restoration
+preserves immutable events and works after restart. The dashboard exposes the base
+prompt editor and distinguishes a missing Docker installation from a failed engine.
+Docker CLI startup errors with zero exit status are covered by a regression test.
+The updated automated suite passes 56 tests. See docker-setup.md for the installed
+versions and the precise custom-kernel blocker. Real sandbox acceptance remains
+unverified.
