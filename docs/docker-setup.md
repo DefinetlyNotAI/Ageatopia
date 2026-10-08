@@ -77,3 +77,66 @@ Windows commit exhaustion and unassigned workspace exploration; clearing build
 caches and fixing that initial instruction resolved these observed failures.
 The operator backend was restarted with the new CLI path and reports both Docker
 and Ollama ready. Open a fresh terminal to pick up the system Docker PATH change.
+
+## Sandbox image security: 2026-10-09
+
+The sandbox now uses digest-pinned Python 3.14.8 on Alpine 3.24, upgrades installed
+OS packages, and installs only the required compiler, process tools, curl, strace,
+and setpriv rather than the full util-linux collection. It retains the worker UID
+and group 10000. The unused pip installer and its ensurepip bootstrap wheels are
+removed entirely, including their vulnerable vendored dependencies. Python and
+the C compiler remain available; installing Python packages inside the sandbox is
+no longer supported. Host application dependencies are unaffected.
+
+Built image `agent-utopia-world:1`:
+`sha256:6e309dfd6100bfa9d587a6d699155ff36fc6ad06092717d647673a8f36f0ef51`.
+
+Two independent scans ran with all severities and unfixed findings included,
+without ignore rules, package exclusions, or VEX suppressions:
+
+| Scanner | Original image | Updated image | Database |
+| --- | --- | --- | --- |
+| Grype 0.120.1 | 1,014 findings | 19 findings: 5 high, 14 medium | Built 2026-10-08 06:33:47 UTC |
+| Trivy 0.75.0 | Not scanned | 0 findings | Updated 2026-10-08 19:05:21 UTC |
+
+Counts are package/advisory matches and differ across scanners. Trivy detected
+63 Alpine packages and no remaining Python distribution packages; its clean result
+does not clear Grype's binary Python/NVD findings. Docker Scout requires a Docker
+sign-in on this installation, so the reported original 157 Scout findings and its
+updated count could not be independently reproduced. **The requested zero-finding
+result across scanners has not been achieved.**
+
+Remaining Grype findings, all retained in the report:
+
+| Package | Findings | Status |
+| --- | --- | --- |
+| binutils 2.45.1-r1 | CVE-2025-69644, CVE-2025-69647, CVE-2025-69648, CVE-2025-69649, CVE-2025-69650, CVE-2025-69651, CVE-2025-69652, CVE-2026-3441, CVE-2026-3442, CVE-2026-4647, CVE-2026-6844, CVE-2026-6845, CVE-2026-6846 | No fixed version in the scanner or Alpine's security feed; the same version is current even in Alpine edge. Some NVD descriptions explicitly identify disputed pre-release findings. Required by gcc; retained. |
+| busybox, busybox-binsh, ssl_client 1.37.0-r31 | CVE-2025-60876, one match per package | No fixed version in the scanner or Alpine's security feed. Core shell/tool implementation retained. |
+| Python 3.14.8 | CVE-2025-15367, CVE-2026-12345, CVE-2026-87910 | Grype reports fixes on other branches or Python 3.15, whose stable Docker image is unavailable. The POP3 command and temporary-directory fixes are not present in this interpreter; the 3.14 temporary-directory backport remains open. The Python CNA record excludes 3.14 from CVE-2026-87910, unlike Grype's NVD match. |
+
+Upstream references: [Alpine binutils package](https://pkgs.alpinelinux.org/package/edge/main/x86_64/binutils),
+[Alpine security feed](https://secdb.alpinelinux.org/v3.24/main.json),
+[Python POP3 advisory](https://mail.python.org/archives/list/security-announce@python.org/thread/CBFBOWVGGUJFSGITQCCBZS4GEYYZ7ZNE/),
+[pending Python 3.14 temporary-directory backport](https://github.com/python/cpython/pull/158430),
+and [Python tarfile CNA record](https://cveawg.mitre.org/api/cve/CVE-2026-87910).
+
+Local full reports are `.data/image-vulnerabilities-before.json`,
+`.data/image-vulnerabilities-after.json`, and `.data/image-trivy-after.json`.
+Scanner downloads were verified against their official release SHA256 checksums.
+Rebuild and rescan with installed scanners:
+
+```powershell
+docker build --pull --no-cache -t agent-utopia-world:1 sandbox
+grype docker:agent-utopia-world:1 -o json --file .data/image-vulnerabilities-after.json --fail-on negligible
+trivy image --image-src docker --scanners vuln --format json --output .data/image-trivy-after.json --exit-code 1 agent-utopia-world:1
+$env:UTOPIA_INTEGRATION = '1'
+.\.venv\Scripts\python.exe -m pytest tests/test_integration.py -q
+```
+
+All three real integrations pass together in 59.68 seconds on the updated image:
+UID/capability and network isolation, shared files, process termination, compiled
+CTF execution, observers and recovery; real Ollama tool calling; and six-agent
+task completion with final workspace capture. The standard suite passes 56 tests
+with the three integrations skipped unless explicitly enabled. Resolving the
+remaining findings needs maintained upstream fixes and scanner metadata updates;
+removing required tools or hiding the findings would not satisfy the request.
