@@ -67,6 +67,8 @@ class DockerSandbox:
             "--cap-add",
             "CHOWN",
             "--cap-add",
+            "FOWNER",
+            "--cap-add",
             "KILL",
             "--cap-add",
             "DAC_OVERRIDE",
