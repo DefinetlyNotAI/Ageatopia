@@ -77,8 +77,8 @@ async def test_real_ollama_shared_model_tool_call():
         result = await provider.chat(
             settings,
             [
-                {"role": "system", "content": "Use a tool to inspect your remaining time."},
-                {"role": "user", "content": "Begin."},
+                {"role": "system", "content": WorldConfig().base_context},
+                {"role": "user", "content": "Begin your work. Available tools are listed."},
             ],
             TOOLS,
         )

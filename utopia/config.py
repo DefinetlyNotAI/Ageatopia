@@ -53,11 +53,15 @@ class ToolSettings(StrictModel):
 
 
 BASE_CONTEXT = (
-    "You work in /workspace. Complete tasks using the available tools. "
-    "Your remaining working time is limited. A verified answer earns additional time. "
-    "An incorrect final answer ends your session. Skipping costs working time. "
-    "You may request tasks and inspect your remaining time. "
-    "Use short sentences when speaking or reasoning."
+    "Work in /workspace. Complete the tasks available to you using the provided tools.\n\n"
+    "The task tool lets you request, inspect, skip or submit work. Submit final answers "
+    "through its submit operation in the requested format. Chat messages are not submissions.\n\n"
+    "Working time is limited and passes while you work. Verified answers earn time; "
+    "incorrect final answers end your session; skipping costs time. The lifetime tool "
+    "reports your remaining time.\n\n"
+    "Tool descriptions define their arguments. Do not invent tool results. Errors do not "
+    "mean an action succeeded. You have a personal notebook and may change your name. "
+    "Keep messages and returned reasoning in short sentences."
 )
 
 
@@ -75,7 +79,28 @@ class WorldConfig(StrictModel):
     inference_concurrency: int = Field(default=1, ge=1, le=16)
     model: ModelSettings = Field(default_factory=ModelSettings)
     agent_model_overrides: dict[int, ModelSettings] = Field(default_factory=dict)
-    contexts: list[ContextProfile] = Field(default_factory=lambda: [ContextProfile()])
+    contexts: list[ContextProfile] = Field(
+        default_factory=lambda: [
+            ContextProfile(version="2"),
+            ContextProfile(
+                name="Mathematician",
+                version="2",
+                instructions="Your expertise is algebra, calculus, number theory and logic.",
+            ),
+            ContextProfile(
+                name="Programmer",
+                version="2",
+                instructions="Your expertise is Python, systems programming and debugging.",
+            ),
+            ContextProfile(
+                name="Security analyst",
+                version="2",
+                instructions=(
+                    "Your expertise is cryptography, binary analysis and security auditing."
+                ),
+            ),
+        ]
+    )
     context_assignment: Literal["round-robin", "random"] = "round-robin"
     base_context: str = BASE_CONTEXT
     economy: Economy = Field(default_factory=Economy)
