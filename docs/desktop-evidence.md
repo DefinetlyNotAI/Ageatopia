@@ -63,10 +63,10 @@ See [PEFT LoRA](https://huggingface.co/docs/peft/main/package_reference/lora) an
 
 ## Verification ledger
 
-- Python suite: 75 passed, three real-provider tests skipped in the standard run.
-  The subsequently added task-request guidance regression passed with all 15 runtime
-  tests. Ruff passed. The remaining FastAPI TestClient warning comes from its current
-  httpx compatibility layer.
+- Python suite: 77 passed, three real-provider tests skipped in the standard run.
+  This includes task-request guidance and adding the event lookup index to an
+  existing database without losing its world. Ruff passed. The remaining FastAPI
+  TestClient warning comes from its current httpx compatibility layer.
 - Dashboard: lint and production build passed. Rendered inspection covered desktop
   and 390-pixel layouts, agent reports and notebook content, link navigation, live
   sample updates, zoom, pan, hover inspection and keyboard sample selection. A
@@ -76,8 +76,10 @@ See [PEFT LoRA](https://huggingface.co/docs/peft/main/package_reference/lora) an
   rendered the observatory with native menus and status. A COM callback ownership
   defect discovered during launch was fixed. Normal close stopped both owned
   services; the verified follow-up shutdown logged a graceful backend exit.
-- TUIs: Textual pilots verified visible controls at 120 by 40, editable configuration,
-  exact-ID deletion confirmation, progress widgets and bounded logging. Maintenance
+- TUIs: Textual pilots verified controls at 120 by 40, 80 by 40 and 80 by 24,
+  editable configuration, exact-ID deletion confirmation, progress widgets and
+  bounded logging. Narrow control panes scroll, all actions remain keyboard
+  reachable, and the world table retains eight rows of height. Maintenance
   diagnostics include the native executable, Docker, Ollama, GPU and disk.
 - Explorer: the UI action opened the agent's world-owned snapshot directory in
   Windows File Explorer. Host snapshots are inspection copies of the shared Docker
@@ -85,15 +87,16 @@ See [PEFT LoRA](https://huggingface.co/docs/peft/main/package_reference/lora) an
 - Real providers: Docker isolation/process/CTF verification passed separately;
   the real Ollama tool-call test passed. Batch embedding retrieval produced 768-value
   vectors and retrieved the relevant latency note in a semantic search.
-- Open acceptance issue: two five-minute six-agent runs failed the existing full
-  acceptance test (three, then four original agents executed a successful workspace
-  command). Recorded activity included autonomous calls, context summaries,
+- Open acceptance issue: three five-minute six-agent runs failed the existing full
+  acceptance test (three, then four, then four original agents executed a successful
+  workspace command). Recorded activity included autonomous calls, context summaries,
   expressions and notebook entries, but did not meet the verified-completion
   threshold. The second run recorded an incorrect submission. A raw Ollama stream
   check confirmed distinct tool IDs/indexes were assembled correctly; logs also
   showed answers sent through `request` and code sent through `task`. The request
   path now explicitly rejects misplaced answers with submission guidance. That
-  follow-up has targeted regression coverage; its live acceptance result is pending.
+  follow-up has targeted regression coverage; its live acceptance run still failed
+  because two original agents did not execute a successful workspace command.
 - `npm audit --omit=dev`: zero vulnerabilities. Nine advisory entries remain in
   existing development tooling; unrelated major upgrades were not forced.
 
