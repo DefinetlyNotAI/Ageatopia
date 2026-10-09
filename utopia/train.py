@@ -15,6 +15,9 @@ def main():
     parser.add_argument("--epochs", type=float, default=1)
     parser.add_argument("--iteration", type=int, default=1)
     parser.add_argument("--max-length", type=int, default=1024)
+    parser.add_argument(
+        "--resume-adapter", type=Path, help="Continue a prior adapter in a new output directory"
+    )
     args = parser.parse_args()
     if args.output.exists() and any(args.output.iterdir()):
         raise SystemExit("Output directory must be empty; existing adapters are preserved")
@@ -55,7 +58,7 @@ def main():
 def train(args):
     import torch
     from datasets import Dataset
-    from peft import LoraConfig, get_peft_model
+    from peft import LoraConfig, PeftModel, get_peft_model
     from transformers import (
         AutoModelForCausalLM,
         AutoTokenizer,
@@ -85,9 +88,20 @@ def train(args):
         trust_remote_code=False,
         torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
     )
-    model = get_peft_model(
-        model, LoraConfig(r=8, lora_alpha=16, target_modules="all-linear", task_type="CAUSAL_LM")
-    )
+    parent = None
+    resume = getattr(args, "resume_adapter", None)
+    if resume:
+        parent = json.loads((resume / "manifest.json").read_text(encoding="utf-8"))
+        if parent["model_version"] != args.model:
+            raise ValueError("Adapter base model must match this training model")
+        if args.iteration <= parent["training_iteration"]:
+            raise ValueError("Training iteration must advance beyond the parent adapter")
+        model = PeftModel.from_pretrained(model, resume, is_trainable=True)
+    else:
+        model = get_peft_model(
+            model,
+            LoraConfig(r=8, lora_alpha=16, target_modules="all-linear", task_type="CAUSAL_LM"),
+        )
     model.config.use_cache = False
     model.enable_input_require_grads()
     trainer = Trainer(
@@ -105,17 +119,25 @@ def train(args):
         train_dataset=Dataset.from_list(samples),
         data_collator=DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False),
     )
-    trainer.train()
+    started = time.perf_counter()
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+    metrics = trainer.train().metrics
     model.save_pretrained(args.output)
     tokenizer.save_pretrained(args.output)
     manifest = {
         "model_version": args.model,
-        "adapter_version": "lora-1",
+        "adapter_version": f"lora-{args.iteration}",
         "dataset_version": hashlib.sha256(args.dataset.read_bytes()).hexdigest(),
         "training_iteration": args.iteration,
         "agent_identities": sorted({r["agent_id"] for r in rows}),
         "context_versions": sorted({r["context_version"] for r in rows}),
         "continuous_training": False,
+        "parent_adapter": parent,
+        "training_seconds": round(time.perf_counter() - started, 3),
+        "training_metrics": metrics,
+        "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
+        "peak_gpu_bytes": torch.cuda.max_memory_allocated() if torch.cuda.is_available() else None,
     }
     (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest

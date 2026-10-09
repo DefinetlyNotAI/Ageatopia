@@ -91,6 +91,10 @@ async def test_autonomous_tool_loop_requests_and_solves_real_engine_task(engine)
     assert rows[0]["messages"][0]["role"] == "system"
     assert rows[0]["messages"][-1]["role"] == "tool"
     assert "verified" in rows[0]["messages"][-1]["content"].lower()
+    assert any(
+        "Your termination pressure:" in message.get("content", "")
+        for message in rows[0]["messages"]
+    )
     assert all(
         set(message) <= {"role", "content", "tool_calls", "name", "tool_call_id"}
         for message in rows[0]["messages"]

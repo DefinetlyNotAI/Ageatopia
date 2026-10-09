@@ -73,6 +73,8 @@ def public_trajectories(store, state):
                 continue
             if record["kind"] == "agent.created":
                 messages = record["payload"]["history"].copy()
+            elif record["kind"] == "memory.context":
+                messages.append({"role": "user", "content": record["payload"]["content"]})
             elif record["kind"] == "task.completed":
                 verified = True
             elif record["kind"] == "agent.message":

@@ -4,6 +4,8 @@ import logging
 
 import uvicorn
 
+from utopia.api import create_app
+
 
 class JsonFormatter(logging.Formatter):
     def format(self, record):
@@ -24,9 +26,14 @@ def main():
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
     logging.basicConfig(level=logging.INFO, handlers=[handler])
-    uvicorn.run(
-        "utopia.api:create_app", factory=True, host="127.0.0.1", port=args.port, log_config=None
-    )
+    app = create_app()
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=args.port, log_config=None))
+
+    def shutdown():
+        server.should_exit = True
+
+    app.state.shutdown = shutdown
+    server.run()
 
 
 if __name__ == "__main__":

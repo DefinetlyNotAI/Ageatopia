@@ -1,7 +1,9 @@
 import asyncio
 import copy
 import json
+import os
 import shutil
+import subprocess
 import time
 
 from utopia.config import ModelSettings
@@ -15,7 +17,7 @@ class Runtime:
         self.engine = engine
         self.inference = inference
         self.sandbox = DockerSandbox(engine.state["id"], engine.config.tools)
-        self.tools = ToolExecutor(engine, self.sandbox, self.sync_clock)
+        self.tools = ToolExecutor(engine, self.sandbox, self.sync_clock, inference)
         self.workers = {}
         self.clock_task = None
         self.stopping = False
@@ -83,10 +85,34 @@ class Runtime:
                 {"model_manifest": manifests, "sandbox_image": engine.config.tools.image},
             )
         await self.observe()
+        # Preload using the actual context size before the simulation starts charging time.
+        await self.warm_models()
+
+    async def warm_models(self):
+        warmed = set()
+        if not hasattr(self.inference, "warm"):
+            return
+        for agent in self.engine.state["agents"].values():
+            if agent["state"] == "TERMINATED":
+                continue
+            settings = ModelSettings.model_validate(agent["model"])
+            key = (
+                settings.base_url,
+                settings.model,
+                settings.context_tokens,
+                settings.gpu_layers,
+                settings.keep_alive,
+            )
+            if settings.provider == "ollama" and key not in warmed:
+                warmed.add(key)
+                timing = await self.inference.warm(settings)
+                self.engine.record("inference.preloaded", {"model": settings.model, **timing})
 
     async def start(self, action):
         if not self.sandbox.available:
             await self.prepare()
+        else:
+            await self.warm_models()
         self.engine.control(action)
         self.stopping = False
         self.wall_anchor_ns = time.perf_counter_ns()
@@ -226,6 +252,7 @@ class Runtime:
                 "--format=csv,noheader,nounits",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             try:
                 output, _ = await asyncio.wait_for(process.communicate(), 3)
@@ -326,6 +353,8 @@ class Runtime:
                 values["inference_ms"] = values.get("inference_ms", 0) + result.latency_ms
                 values["inferences"] = values.get("inferences", 0) + 1
                 values["tokens_per_second"] = result.tokens / max(0.001, result.latency_ms / 1000)
+                for key in ("first_token_ms", "load_ms", "prompt_eval_ms", "eval_ms"):
+                    values[key] = getattr(result, key, None)
                 engine.emit(
                     "inference.completed",
                     {
@@ -333,6 +362,10 @@ class Runtime:
                         "prompt_tokens": result.prompt_tokens,
                         "latency_ms": result.latency_ms,
                         "model": settings.model,
+                        "first_token_ms": getattr(result, "first_token_ms", None),
+                        "load_ms": getattr(result, "load_ms", None),
+                        "prompt_eval_ms": getattr(result, "prompt_eval_ms", None),
+                        "eval_ms": getattr(result, "eval_ms", None),
                     },
                     identity,
                 )
@@ -342,12 +375,12 @@ class Runtime:
             if acquired:
                 self.inference.semaphore.release()
 
-    async def manage_context(self, identity):
+    async def manage_context(self, identity, supplemental=None):
         engine = self.engine
         agent = engine.agent(identity)
         settings = ModelSettings.model_validate(agent["model"])
         try:
-            self.inference.context_bound(agent["history"], TOOLS, settings)
+            self.inference.context_bound(agent["history"] + (supplemental or []), TOOLS, settings)
         except ContextOverflow as error:
             engine.record(
                 "context.capacity",
@@ -399,7 +432,21 @@ class Runtime:
                     {"source_messages": len(json.loads(chunk)), "summary": result.message},
                     identity,
                 )
-            self.inference.context_bound(agent["history"], TOOLS, settings)
+            try:
+                self.inference.context_bound(
+                    agent["history"] + (supplemental or []), TOOLS, settings
+                )
+            except ContextOverflow as error:
+                engine.record(
+                    "context.summary-unavailable",
+                    {"reason": str(error)},
+                    identity,
+                    severity="warning",
+                )
+                with engine.transaction():
+                    agent["state"] = "IDLE"
+                    agent["retry_after_ms"] = 2**62
+                return False
         return True
 
     async def agent_loop(self, identity):
@@ -415,10 +462,40 @@ class Runtime:
                     agent["model_version"] = manifest.get("hash")
                     engine.emit("agent.model-version", manifest, identity)
             while not self.stopping and engine.agent(identity)["state"] != "TERMINATED":
-                if not await self.manage_context(identity):
-                    return
                 agent = engine.agent(identity)
-                result = await self.infer(identity, copy.deepcopy(agent["history"]), TOOLS)
+                task = engine.task(agent["task_id"]) if agent["task_id"] else None
+                notes = [
+                    note[:600]
+                    for note in engine.recall(identity, task["prompt"] if task else "", 3)
+                ]
+                state_note = (
+                    f"Your remaining time: {agent['lifetime_ms'] / 1000:.1f} seconds. "
+                    f"Your termination pressure: {agent.get('termination_fear', 0):.3f} "
+                    "on a 0 to 1 scale. Let this affect your own feelings, risk assessment "
+                    "and intentions; you decide how to act."
+                    if engine.config.termination_fear
+                    else ""
+                )
+                if notes:
+                    state_note += (
+                        "\nRelevant excerpts from your own notebook and experience:\n"
+                        + "\n".join(notes)
+                    )
+                supplemental = [{"role": "user", "content": state_note}] if state_note else []
+                if not await self.manage_context(identity, supplemental):
+                    return
+                messages = copy.deepcopy(engine.agent(identity)["history"]) + supplemental
+                if state_note:
+                    engine.record(
+                        "memory.context",
+                        {
+                            "notes": notes,
+                            "termination_fear": agent.get("termination_fear", 0),
+                            "content": state_note,
+                        },
+                        identity,
+                    )
+                result = await self.infer(identity, messages, TOOLS)
                 calls = result.message.get("tool_calls") or []
                 if not calls and not (result.message.get("content") or "").strip():
                     raise ValueError("Provider returned an empty response")

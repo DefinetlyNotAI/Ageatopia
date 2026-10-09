@@ -1,5 +1,6 @@
 import copy
 import random
+import re
 import threading
 import time
 import uuid
@@ -148,6 +149,9 @@ class Engine:
                 {"role": "user", "content": "Begin your work. Available tools are listed."},
             ],
             memory=[],
+            learning=[],
+            expressions=[],
+            termination_fear=0.0,
             task_history=[],
             lifetime_history=[],
             processes=[],
@@ -197,6 +201,7 @@ class Engine:
     def _change_lifetime(self, agent, amount, reason, task_id=None):
         before = agent["lifetime_ms"]
         agent["lifetime_ms"] = max(0, before + amount)
+        self.update_fear(agent)
         record = dict(
             sim_ms=self.state["sim_ms"],
             delta_ms=agent["lifetime_ms"] - before,
@@ -260,6 +265,7 @@ class Engine:
                     else:
                         agent["lifetime_ms"] = max(0, agent["lifetime_ms"] - delta)
                         agent["total_charge_ms"] += delta
+                        self.update_fear(agent)
                         if agent["lifetime_ms"] == 0:
                             self._terminate(agent, "expired")
                 due = [r for r in self.state["respawns"] if r["due_ms"] <= next_ms]
@@ -307,6 +313,7 @@ class Engine:
                 return {"error": "No current task"}
             agent["state"] = "SKIPPING"
             task["skips"] += 1
+            self._learn(agent, task, "I skipped this task without a verified solution.")
             task["reward_multiplier"] = min(
                 self.config.economy.maximum_multiplier,
                 task["reward_multiplier"] * 2
@@ -392,6 +399,7 @@ class Engine:
                 outcome=grade.kind,
             )
             if grade.kind == GradeKind.INCORRECT:
+                self._learn(agent, task, "My submitted answer was not verified; my session ended.")
                 self._terminate(agent, "incorrect-answer")
                 return {"status": "Answer not verified; session ended"}
             economy = self.config.economy
@@ -402,6 +410,7 @@ class Engine:
                 // economy.reward_rate_denominator
             )
             self._change_lifetime(agent, reward, "reward", task["id"])
+            self._learn(agent, task, "My submitted answer was verified and earned working time.")
             agent.update(task_id=None, task_started_charge_ms=None, state="ACTIVE")
             task["reward_ms"] = reward
             self.emit(
@@ -444,15 +453,81 @@ class Engine:
             self.emit("agent.message", message, identity, agent["task_id"])
 
     def save_memory(self, identity, text):
-        if not isinstance(text, str) or len(text) > 4096:
+        if not isinstance(text, str) or not text.strip() or len(text) > 4096:
             return {"error": "Memory must be text up to 4096 characters"}
         with self.transaction():
             agent = self._living(identity)
-            if len(agent["memory"]) >= 100:
+            if len(agent["memory"]) >= 10000:
                 return {"error": "Personal notebook is full"}
             agent["memory"].append(text)
             self.emit("memory.written", {"text": text}, identity)
             return {"status": "Saved"}
+
+    def update_fear(self, agent):
+        remaining = agent["lifetime_ms"] / self.config.economy.initial_lifetime_ms
+        agent["termination_fear"] = round(
+            self.config.termination_fear * max(0.0, min(1.0, 1 - remaining)), 3
+        )
+
+    def _learn(self, agent, task, text):
+        entry = {
+            "text": text,
+            "sim_ms": self.state["sim_ms"],
+            "task_id": task["id"],
+            "category": task["category"],
+        }
+        agent.setdefault("learning", []).append(entry)
+        note = f"{task['category']} · {task['id']}: {text}"
+        if len(agent["memory"]) < 10000:
+            agent["memory"].append(note)
+            self.emit(
+                "memory.written",
+                {"text": note, "source": "observed-outcome"},
+                agent["id"],
+                task["id"],
+            )
+        self.emit("learning.experience", entry, agent["id"], task["id"])
+
+    def reflect(self, identity, thought, feeling, intention):
+        values = {"thought": thought, "feeling": feeling, "intention": intention}
+        if any(not isinstance(value, str) or len(value) > 500 for value in values.values()):
+            raise ValueError("Reflection fields must be text up to 500 characters")
+        if not any(value.strip() for value in values.values()):
+            raise ValueError("Reflection must contain a thought, feeling or intention")
+        with self.transaction():
+            agent = self._living(identity)
+            entry = {"sim_ms": self.state["sim_ms"], **values}
+            agent.setdefault("expressions", []).append(entry)
+            text = "\n".join(f"{key}: {value}" for key, value in values.items() if value.strip())
+            if len(agent["memory"]) < 10000:
+                agent["memory"].append(text)
+                self.emit("memory.written", {"text": text, "source": "self-reflection"}, identity)
+            self.emit("agent.expression", entry, identity, agent["task_id"])
+            return {
+                "status": "Reflection recorded",
+                "notebook_saved": len(agent["memory"]) < 10000 or text in agent["memory"],
+            }
+
+    def recall(self, identity, query="", limit=5):
+        agent = self.agent(identity)
+        entries = list(
+            dict.fromkeys(
+                [
+                    *agent["memory"],
+                    *(
+                        f"{item['category']} · {item['task_id']}: {item['text']}"
+                        for item in agent.get("learning", [])
+                    ),
+                ]
+            )
+        )
+        words = set(re.findall(r"\w+", query.lower()))
+        ranked = sorted(
+            enumerate(entries),
+            key=lambda item: (len(words & set(re.findall(r"\w+", item[1].lower()))), item[0]),
+            reverse=True,
+        )
+        return [text for _, text in ranked[:limit]]
 
     def rename(self, identity, name):
         if not isinstance(name, str) or not name.strip() or len(name) > 80:
@@ -497,6 +572,9 @@ class Engine:
                     "history",
                     "context",
                     "memory",
+                    "learning",
+                    "expressions",
+                    "memory_vectors",
                     "lifetime_history",
                     "task_history",
                     "pending_tools",

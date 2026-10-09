@@ -1,3 +1,4 @@
+import math
 import shlex
 
 from utopia.sandbox import SandboxUnavailable
@@ -59,22 +60,35 @@ TOOLS = [
     function("lifetime", "Read your remaining working time.", {}, []),
     function(
         "memory",
-        "Write or retrieve your personal notebook.",
+        "Write observations and lessons to your personal notebook, read recent entries, "
+        "or search experiences relevant to your current work.",
         {
-            "operation": {"type": "string", "enum": ["read", "write"]},
+            "operation": {"type": "string", "enum": ["read", "write", "search"]},
             "text": {"type": "string"},
         },
         ["operation"],
+    ),
+    function(
+        "reflect",
+        "Express your own thought, feeling and intention in one or two short sentences. "
+        "Meaningful reflections are saved in your personal notebook.",
+        {
+            "thought": {"type": "string"},
+            "feeling": {"type": "string"},
+            "intention": {"type": "string"},
+        },
+        [],
     ),
     function("rename", "Change your name.", {"name": {"type": "string"}}, ["name"]),
 ]
 
 
 class ToolExecutor:
-    def __init__(self, engine, sandbox, sync_clock=None):
+    def __init__(self, engine, sandbox, sync_clock=None, inference=None):
         self.engine = engine
         self.sandbox = sandbox
         self.sync_clock = sync_clock
+        self.inference = inference
 
     async def execute(self, identity, name, arguments):
         engine = self.engine
@@ -122,11 +136,50 @@ class ToolExecutor:
             return {"remaining_ms": engine.personal_state(identity)["remaining_ms"]}
         if name == "rename":
             return engine.rename(identity, args["name"])
+        if name == "reflect":
+            return engine.reflect(
+                identity, *(args.get(key, "") for key in ("thought", "feeling", "intention"))
+            )
         if name == "memory":
             if args["operation"] == "write":
                 return engine.save_memory(identity, args.get("text"))
             if args["operation"] == "read":
-                return {"notes": list(engine.agent(identity)["memory"])}
+                return {
+                    "notes": engine.agent(identity)["memory"][-20:],
+                    "total": len(engine.agent(identity)["memory"]),
+                }
+            if args["operation"] == "search":
+                query = args.get("text", "")
+                if not isinstance(query, str) or len(query) > 4096:
+                    raise ValueError("Search text must contain up to 4096 characters")
+                candidates = engine.recall(identity, query, 64)
+                settings = engine.config.embedding_model
+                if settings and self.inference and candidates:
+                    vectors = await self.inference.embeddings(settings, [query, *candidates])
+                    target = vectors[0]
+
+                    def similarity(vector):
+                        dot = sum(x * y for x, y in zip(target, vector, strict=True))
+                        norm = math.sqrt(sum(x * x for x in target) * sum(x * x for x in vector))
+                        return dot / norm if norm else 0
+
+                    candidates = [
+                        text
+                        for _, text in sorted(
+                            zip((similarity(v) for v in vectors[1:]), candidates, strict=True),
+                            reverse=True,
+                        )
+                    ]
+                engine.record(
+                    "memory.retrieved",
+                    {
+                        "query": query,
+                        "count": min(5, len(candidates)),
+                        "method": "embedding" if settings and self.inference else "lexical",
+                    },
+                    identity,
+                )
+                return {"notes": candidates[:5]}
             raise ValueError("Unknown memory operation")
         if name != "workspace":
             raise ValueError("Unknown tool")

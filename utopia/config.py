@@ -20,6 +20,8 @@ class ModelSettings(StrictModel):
     adapter_version: str | None = None
     training_dataset_version: str | None = None
     training_iteration: int = Field(default=0, ge=0)
+    keep_alive: str | int = -1
+    gpu_layers: int | None = Field(default=None, ge=0)
 
 
 class ContextProfile(StrictModel):
@@ -70,8 +72,10 @@ BASE_CONTEXT = (
     "mean an action succeeded. Read each result before choosing your next action. "
     "Do not repeat an unchanged action that failed or provided no new evidence. "
     "Try a different method, or skip a task when you cannot make progress. "
-    "You have a personal notebook and may change your name. "
-    "Keep messages and returned reasoning in short sentences."
+    "Use your personal notebook to record useful observations, experiences, lessons and "
+    "reflections. Retrieve relevant notes before approaching similar work. You may change "
+    "your name. Express your own feelings, thoughts and intentions naturally in one or two "
+    "short sentences using reflect when meaningful. Keep messages concise."
 )
 
 
@@ -87,6 +91,8 @@ class WorldConfig(StrictModel):
     tick_ms: int = Field(default=1000, ge=100, le=10000)
     exclude_queue_wait: bool = True
     inference_concurrency: int = Field(default=1, ge=1, le=16)
+    termination_fear: float = Field(default=0.5, ge=0, le=1)
+    embedding_model: ModelSettings | None = None
     model: ModelSettings = Field(default_factory=ModelSettings)
     agent_model_overrides: dict[int, ModelSettings] = Field(default_factory=dict)
     contexts: list[ContextProfile] = Field(

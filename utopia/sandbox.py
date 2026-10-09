@@ -1,7 +1,9 @@
 import asyncio
 import base64
 import json
+import os
 import shutil
+import subprocess
 
 CLIENT = (
     "import socket,sys; s=socket.socket(socket.AF_UNIX); "
@@ -31,6 +33,7 @@ class DockerSandbox:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(stdin), deadline_seconds)

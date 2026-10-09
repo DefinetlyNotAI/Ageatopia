@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import copy
 import hmac
 import json
@@ -6,6 +7,8 @@ import logging
 import os
 import secrets
 import shutil
+import subprocess
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -19,7 +22,7 @@ from utopia.engine import Engine
 from utopia.exports import all_events, comparison, export_run, public_trajectories
 from utopia.providers import SharedInference
 from utopia.runtime import Runtime
-from utopia.sandbox import SandboxUnavailable
+from utopia.sandbox import DockerSandbox, SandboxUnavailable
 from utopia.store import Store
 
 logger = logging.getLogger("utopia")
@@ -102,6 +105,15 @@ def create_app(directory=None, store=None, token=None):
     async def health():
         return {"status": "ok", "schema_version": 1}
 
+    @app.post("/shutdown", dependencies=protected)
+    async def shutdown():
+        callback = getattr(app.state, "shutdown", None)
+        if callback is None:
+            raise HTTPException(409, "This server is not managed by the desktop launcher")
+        app.state.shutdown_requested = True
+        callback()
+        return {"status": "stopping"}
+
     @app.get("/system", dependencies=protected)
     async def system():
         docker = shutil.which("docker") is not None
@@ -115,6 +127,7 @@ def create_app(directory=None, store=None, token=None):
                 "{{.ID}}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             try:
                 stdout, stderr = await asyncio.wait_for(process.communicate(), 5)
@@ -158,29 +171,34 @@ def create_app(directory=None, store=None, token=None):
         ]
 
     @app.delete("/runs/{run_id}", dependencies=protected)
-    async def delete_run(run_id: str):
+    async def delete_run(run_id: str, confirm: str | None = None):
         async with control_lock:
-            engine = lookup(run_id)
+            engine = lookup(run_id, include_deleted=True)
+            if confirm != run_id:
+                raise ValueError("Permanent deletion requires confirmation of the world ID")
             if engine.state["status"] == "RUNNING":
                 raise ValueError("Pause or terminate the run before deleting it")
             if run_id in runtimes:
                 await runtimes[run_id].close()
                 del runtimes[run_id]
-            with engine.transaction():
-                engine.state["deleted"] = True
-                engine.emit("run.deleted", {"recoverable": True})
-            return {"id": run_id, "deleted": True, "recoverable": True}
-
-    @app.post("/runs/{run_id}/restore", dependencies=protected)
-    async def restore_run(run_id: str):
-        async with control_lock:
-            engine = lookup(run_id, include_deleted=True)
-            if not engine.state.get("deleted"):
-                raise ValueError("World is not deleted")
-            with engine.transaction():
-                engine.state["deleted"] = False
-                engine.emit("run.restored", {})
-            return engine.summary()
+            else:
+                sandbox = DockerSandbox(run_id, engine.config.tools)
+                if shutil.which("docker"):
+                    result = await sandbox._docker(
+                        "ps", "-aq", "--filter", f"name=^/{sandbox.name}$"
+                    )
+                    if result.strip():
+                        await sandbox.stop()
+                elif engine.state.get("model_manifest"):
+                    raise SandboxUnavailable("Docker is required to remove this world's sandbox")
+            world_dir = (directory / "worlds" / run_id).resolve()
+            if not world_dir.is_relative_to(directory / "worlds"):
+                raise ValueError("World directory is outside application storage")
+            if world_dir.exists():
+                shutil.rmtree(world_dir)
+            database.erase_run(run_id)
+            del engines[run_id]
+            return {"id": run_id, "deleted": True, "recoverable": False}
 
     @app.post("/runs", dependencies=protected, status_code=201)
     async def create_run(config: WorldConfig):
@@ -201,29 +219,63 @@ def create_app(directory=None, store=None, token=None):
     @app.get("/runs/{run_id}/agents/{identity}", dependencies=protected)
     async def get_agent(run_id: str, identity: str):
         agent = lookup(run_id).agent(identity)
-        records = list(all_events(database, run_id))
-        paths = set()
-        for record in records:
-            if record["agent_id"] == identity and record["kind"] == "tool.invoked":
-                payload = record["payload"]
-                arguments = payload.get("arguments") or {}
-                if payload.get("name") == "workspace" and isinstance(arguments, dict):
-                    if arguments.get("operation") in {"read", "write"}:
-                        paths.add(
-                            str(arguments.get("value", ""))
-                            .removeprefix("/workspace/")
-                            .removeprefix("./")
-                        )
-        evidence = [
-            record
-            for record in records
-            if record["kind"] == "workspace.modified" and record["payload"].get("path") in paths
-        ]
+        evidence, count = database.workspace_evidence(run_id, identity)
         return {
             **agent,
+            "history": agent["history"][-200:],
+            "history_count": len(agent["history"]),
+            "memory": agent["memory"][-100:],
+            "memory_count": len(agent["memory"]),
+            "expressions": agent.get("expressions", [])[-200:],
+            "learning": agent.get("learning", [])[-200:],
+            "expression_count": len(agent.get("expressions", [])),
+            "learning_count": len(agent.get("learning", [])),
             "workspace_events": evidence[-200:],
-            "workspace_event_count": len(evidence),
+            "workspace_event_count": count,
         }
+
+    @app.post("/runs/{run_id}/agents/{identity}/sandbox/open", dependencies=protected)
+    async def open_sandbox(run_id: str, identity: str, path: str = ""):
+        async with control_lock:
+            engine = lookup(run_id)
+            agent = engine.agent(identity)
+            if run_id in runtimes and runtimes[run_id].sandbox.available:
+                await runtimes[run_id].observe()
+            root = (directory / "worlds" / run_id / "agents" / identity / "sandbox").resolve()
+            if not root.is_relative_to(directory / "worlds"):
+                raise ValueError("Invalid sandbox directory")
+            if root.exists():
+                shutil.rmtree(root)
+            root.mkdir(parents=True)
+            for name, item in engine.state["workspace"].items():
+                destination = (root / name).resolve()
+                if not destination.is_relative_to(root) or destination == root:
+                    raise ValueError("Workspace snapshot contains an invalid path")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if "symlink" in item:
+                    destination.write_text(
+                        "Symbolic link (inspection copy only):\n" + str(item["symlink"]),
+                        encoding="utf-8",
+                    )
+                else:
+                    destination.write_bytes(base64.b64decode(item["data"]))
+            (root.parent / "notebook.md").write_text("\n\n".join(agent["memory"]), encoding="utf-8")
+            target = (root / path.removeprefix("/workspace/")).resolve()
+            if not target.is_relative_to(root) or not target.exists():
+                raise ValueError("File is outside this sandbox snapshot or does not exist")
+            if sys.platform == "win32":
+                if target.is_dir():
+                    os.startfile(str(target))
+                else:
+                    await asyncio.create_subprocess_exec("explorer.exe", "/select,", str(target))
+            else:
+                await asyncio.create_subprocess_exec(
+                    "open" if sys.platform == "darwin" else "xdg-open",
+                    str(target.parent if target.is_file() else target),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+            return {"path": str(target), "kind": "workspace-snapshot"}
 
     @app.post("/runs/{run_id}/control/{action}", dependencies=protected)
     async def control(run_id: str, action: str):
@@ -300,6 +352,8 @@ def create_app(directory=None, store=None, token=None):
         async def records():
             nonlocal cursor
             while not await request.is_disconnected():
+                if run_id not in engines or getattr(app.state, "shutdown_requested", False):
+                    return
                 page = database.event_page(run_id, cursor, limit=100)
                 for record in page:
                     cursor = record["sequence"]
