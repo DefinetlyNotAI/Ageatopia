@@ -230,3 +230,18 @@ Normal image updates do not require a full Docker or WSL backup. The deleted
 reinstall backup was a recovery copy from the earlier Docker repair. Build cache
 and superseded image layers are separate from backups and can be cleaned without
 duplicating the whole data disk.
+
+The subsequent cleanup removed the obsolete `security` tag, standalone Python
+build bases, an old test container, and two stopped world containers. The retained
+paused verification world's 30 workspace files are saved in the database; its
+container is recreated from that snapshot when resumed. Docker now retains only
+the current `agent-utopia-world:1` image, with no containers or build cache.
+
+The restored image was rechecked with all three real integrations passing in
+44.66 seconds, including successful workspace actions by all six default agents.
+The standard suite passed 61 tests. Trivy still reported zero findings; Grype's
+2026-10-08 database reported three BusyBox version matches (CVE-2026-38753,
+CVE-2026-38754 and CVE-2026-38755), down from five in the earlier scan. All nine
+originally reported binutils/strace CVEs remain absent. The unfiltered zero-Grype
+gate is still incomplete. Reports are `.data/image-trivy-recheck.json` and
+`.data/image-vulnerabilities-recheck.json`.
