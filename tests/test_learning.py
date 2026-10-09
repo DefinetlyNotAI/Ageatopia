@@ -1,12 +1,12 @@
 import json
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, inspect
 from sqlalchemy.exc import IntegrityError
 
 from utopia.engine import Engine
 from utopia.runtime import Runtime
-from utopia.store import events
+from utopia.store import Store, events
 from utopia.tools import ToolExecutor
 
 
@@ -70,3 +70,16 @@ async def test_warming_honors_different_retention_and_excludes_preload_from_cloc
     await Runtime(engine, provider).warm_models()
     assert provider.calls == [0, -1]
     assert [a["lifetime_ms"] for a in engine.state["agents"].values()] == balances
+
+
+def test_existing_database_receives_event_lookup_index_without_losing_state(engine, tmp_path):
+    with engine.store.engine.begin() as connection:
+        connection.exec_driver_sql("DROP INDEX events_run_agent_kind")
+    reopened = Store.local(tmp_path)
+    try:
+        assert "events_run_agent_kind" in {
+            index["name"] for index in inspect(reopened.engine).get_indexes("events")
+        }
+        assert reopened.load(engine.state["id"])["id"] == engine.state["id"]
+    finally:
+        reopened.engine.dispose()

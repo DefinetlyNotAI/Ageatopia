@@ -42,7 +42,9 @@ presets = Table(
     Column("name", String, primary_key=True),
     Column("config", Text, nullable=False),
 )
-Index("events_run_agent_kind", events.c.run_id, events.c.agent_id, events.c.kind)
+event_lookup_index = Index(
+    "events_run_agent_kind", events.c.run_id, events.c.agent_id, events.c.kind
+)
 
 
 def encode(value):
@@ -63,6 +65,7 @@ class Store:
                 connection.execute("PRAGMA foreign_keys=ON")
 
         metadata.create_all(self.engine)
+        event_lookup_index.create(self.engine, checkfirst=True)
         if url.startswith("sqlite"):
             with self.engine.begin() as connection:
                 for action in ("UPDATE", "DELETE"):
