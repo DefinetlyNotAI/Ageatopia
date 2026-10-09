@@ -49,7 +49,7 @@ TOOLS = [
             },
             "text": {
                 "type": "string",
-                "description": "File content for write only, not code to run",
+                "description": "Required for write: file content, not code to run",
             },
         },
         ["operation", "value"],
@@ -241,7 +241,12 @@ class ToolExecutor:
             case "shell" | "compile" | "service":
                 command = value
             case "write":
-                text = args.get("text", "")
+                if "text" not in args:
+                    raise ValueError(
+                        "workspace write requires text containing file contents and value "
+                        "containing a path. To run Python, use operation=python with code in value."
+                    )
+                text = args["text"]
                 if not isinstance(text, str) or len(text.encode()) > 65536:
                     raise ValueError("Write content exceeds 65536 bytes")
                 script = (
@@ -257,6 +262,12 @@ class ToolExecutor:
             if args["operation"] == "service"
             else await self.sandbox.execute(identity, command)
         )
+        if result["exit_code"] not in (0, None):
+            result["usage"] = (
+                "read/write/list take a path in value; write also requires text. "
+                "For calculations, use operation=python with Python code in value that prints "
+                "its result. shell/compile/service take a shell command; search takes a pattern."
+            )
         engine.record(
             "process.executed",
             {

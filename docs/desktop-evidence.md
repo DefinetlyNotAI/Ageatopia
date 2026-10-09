@@ -439,3 +439,31 @@ found no actionable issues. The implementation follows the
 [PEFT quantized training procedure](https://huggingface.co/docs/peft/developer_guides/quantization)
 and the installed release's
 [Windows CUDA support](https://huggingface.co/docs/bitsandbytes/v0.50.2/en/installation).
+
+## Workspace feedback and successful live acceptance
+
+The prior run's missing agent sent calculations to shell and file operations.
+It also called `workspace write` with code as the path and omitted file content;
+the executor previously supplied an empty string and attempted a file write.
+Writes now require explicit `text`, while an intentional empty string remains
+valid. Missing content returns an error before process execution. Failed workspace
+process responses retain their output and exit status and include short guidance
+distinguishing paths, Python code, shell commands and search patterns. Successful
+responses and running services do not receive that extra field.
+
+The unchanged real six-agent acceptance test passed in 247.49 s with the default
+Qwen3.5:2B model and Docker. The preserved run is
+`.data/acceptance-workspace-feedback/test_real_six_agent_acceptance0/utopia.db`,
+world `a4a7c0c3f26143d7955db44a5380ca67`. It reached 227,671 ms of simulation time,
+with successful workspace actions from all six identities, continued successful
+actions after summarization, at least two inferences and assigned/history tasks
+per identity, and one verified completion. There were 174 completed inferences,
+42 summaries, 21 failed-process guidance responses and two missing-content guard
+responses. All 5,460 recorded events had info severity. Termination captured the
+final workspace; subsequent checks found no remaining sandbox containers or loaded
+Ollama models. A passing run does not establish that every agent choice was effective.
+
+Verification passed 105 standard tests with three integration tests deselected,
+the real acceptance test, and Ruff check/format. Focused review found no actionable
+issues. Reliable held-out weight-learning improvement remains unproven; no adapter
+was activated.

@@ -37,7 +37,8 @@ Commit simulation, desktop controls and observatory changes as coherent themes.
 Do not push. Record unverified training/hardware paths explicitly.
 
 GPU adapter training, continuation and bounded inference host-cache configuration
-are verified. Held-out math evaluation found no improvement from the saved adapter.
+are verified. Held-out math evaluation has not shown repeatable adapter improvement.
 Live Explorer access is verified with a quota-limited Docker tmpfs volume.
-Full live acceptance and improved adapter performance remain unresolved;
+Full live acceptance passed after correcting workspace-write validation and adding
+failed-action guidance. Reliable adapter improvement remains unresolved;
 see desktop-evidence.md. The overall goal is not marked complete.

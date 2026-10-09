@@ -121,6 +121,37 @@ async def test_workspace_missing_value_explains_python_argument_without_executin
     assert not engine.store.event_page(engine.state["id"], kind="process.executed")
 
 
+async def test_workspace_write_requires_explicit_file_content_without_executing(engine):
+    identity = next(iter(engine.state["agents"]))
+    executor = ToolExecutor(engine, FakeSandbox())
+    result = await executor.execute(
+        identity, "workspace", {"operation": "write", "value": "print(1/4)"}
+    )
+    assert "text" in result["error"] and "path" in result["error"]
+    assert "operation=python" in result["error"]
+    assert not engine.store.event_page(engine.state["id"], kind="process.executed")
+
+
+async def test_failed_workspace_response_preserves_error_and_explains_argument(engine):
+    class Sandbox(FakeSandbox):
+        async def execute(self, identity, command):
+            return {
+                "process_id": 1,
+                "exit_code": 1,
+                "timed_out": False,
+                "output": "cat: can't open 'print(1/4)': No such file or directory",
+            }
+
+    identity = next(iter(engine.state["agents"]))
+    executor = ToolExecutor(engine, Sandbox())
+    result = await executor.execute(
+        identity, "workspace", {"operation": "read", "value": "print(1/4)"}
+    )
+    assert result["exit_code"] == 1 and "No such file" in result["output"]
+    assert "path" in result["usage"] and "operation=python" in result["usage"]
+    assert len(engine.store.event_page(engine.state["id"], kind="process.executed")) == 1
+
+
 async def test_inspecting_without_a_task_explains_how_to_request_work(engine):
     identity = next(iter(engine.state["agents"]))
     executor = ToolExecutor(engine, FakeSandbox())
