@@ -419,8 +419,10 @@ class Runtime:
                     return
                 agent = engine.agent(identity)
                 result = await self.infer(identity, copy.deepcopy(agent["history"]), TOOLS)
-                engine.conversation(identity, result.message)
                 calls = result.message.get("tool_calls") or []
+                if not calls and not (result.message.get("content") or "").strip():
+                    raise ValueError("Provider returned an empty response")
+                engine.conversation(identity, result.message)
                 if not calls:
                     # A model choosing to stop is idle; no fabricated action or repeated nudging.
                     with engine.transaction():

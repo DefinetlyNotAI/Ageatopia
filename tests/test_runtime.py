@@ -114,6 +114,17 @@ async def test_inference_failure_backoff_does_not_kill_agent(engine):
     assert provider.active == 0 and provider.semaphore._value == 1
 
 
+async def test_empty_model_response_is_retryable_and_does_not_enter_history(engine):
+    identity = next(iter(engine.state["agents"]))
+    runtime, provider = runtime_with(engine, [{"role": "assistant", "content": ""}])
+    history = copy.deepcopy(engine.agent(identity)["history"])
+    await runtime.agent_loop(identity)
+    assert engine.agent(identity)["state"] != "IDLE"
+    assert engine.agent(identity)["history"] == history
+    assert engine.agent(identity)["retry_after_ms"] - engine.state["sim_ms"] == 2000
+    assert provider.active == 0 and provider.semaphore._value == 1
+
+
 async def test_cancelled_queue_wait_releases_waiting_flag(engine):
     identity = next(iter(engine.state["agents"]))
     runtime, provider = runtime_with(engine, [])
