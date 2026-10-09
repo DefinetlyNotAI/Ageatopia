@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import delete, inspect
@@ -8,6 +9,20 @@ from utopia.engine import Engine
 from utopia.runtime import Runtime
 from utopia.store import Store, events
 from utopia.tools import ToolExecutor
+from utopia.train import train
+
+
+@pytest.mark.parametrize(
+    ("model", "iteration", "error"), [("different", 2, "base model"), ("base", 1, "advance")]
+)
+def test_adapter_continuation_validates_parent_before_loading_weights(
+    tmp_path, model, iteration, error
+):
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"model_version": "base", "training_iteration": 1}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match=error):
+        train(SimpleNamespace(resume_adapter=tmp_path, model=model, iteration=iteration))
 
 
 def test_personal_learning_reflection_and_fear_survive_recovery(engine):

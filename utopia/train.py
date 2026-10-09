@@ -56,6 +56,15 @@ def main():
 
 
 def train(args):
+    parent = None
+    resume = getattr(args, "resume_adapter", None)
+    if resume:
+        parent = json.loads((resume / "manifest.json").read_text(encoding="utf-8"))
+        if parent["model_version"] != args.model:
+            raise ValueError("Adapter base model must match this training model")
+        if args.iteration <= parent["training_iteration"]:
+            raise ValueError("Training iteration must advance beyond the parent adapter")
+
     import torch
     from datasets import Dataset
     from peft import LoraConfig, PeftModel, get_peft_model
@@ -88,14 +97,7 @@ def train(args):
         trust_remote_code=False,
         torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
     )
-    parent = None
-    resume = getattr(args, "resume_adapter", None)
     if resume:
-        parent = json.loads((resume / "manifest.json").read_text(encoding="utf-8"))
-        if parent["model_version"] != args.model:
-            raise ValueError("Adapter base model must match this training model")
-        if args.iteration <= parent["training_iteration"]:
-            raise ValueError("Training iteration must advance beyond the parent adapter")
         model = PeftModel.from_pretrained(model, resume, is_trainable=True)
     else:
         model = get_peft_model(
