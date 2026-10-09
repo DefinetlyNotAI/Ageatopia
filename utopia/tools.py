@@ -23,7 +23,9 @@ def function(name, description, properties, required):
 TOOLS = [
     function(
         "workspace",
-        "Work with files and programs in /workspace.",
+        "Work with files and programs in /workspace. For calculations use operation=python "
+        'with value containing Python code, for example {"operation":"python",'
+        '"value":"print(1/4)"}. Read the actual output before submitting your answer.',
         {
             "operation": {
                 "type": "string",
@@ -41,9 +43,14 @@ TOOLS = [
             },
             "value": {
                 "type": "string",
-                "description": "Path, search pattern, code or shell command",
+                "description": "Required. Python code for python; command for shell, compile "
+                "or service; path for read, write or list; pattern for search; empty string "
+                "for processes. Python code must print its result.",
             },
-            "text": {"type": "string", "description": "Content for write; optional"},
+            "text": {
+                "type": "string",
+                "description": "File content for write only, not code to run",
+            },
         },
         ["operation", "value"],
     ),
@@ -132,7 +139,9 @@ class ToolExecutor:
                 case "request":
                     return engine.request_task(identity)
                 case "inspect":
-                    return engine.personal_state(identity)["task"]
+                    return engine.personal_state(identity)["task"] or {
+                        "error": "No current task. Call task with operation=request."
+                    }
                 case "skip":
                     return engine.skip(identity)
                 case "submit":
@@ -189,6 +198,12 @@ class ToolExecutor:
             raise ValueError("Unknown memory operation")
         if name != "workspace":
             raise ValueError("Unknown tool")
+        if "value" not in args:
+            raise ValueError(
+                "workspace requires value: Python code for operation=python, a shell command "
+                "for shell/compile/service, a path for read/write/list, a pattern for search, "
+                "or an empty string for processes. text is file content for write only."
+            )
         value = args["value"]
         if not isinstance(value, str) or len(value) > 16384:
             raise ValueError("Value must be text up to 16384 characters")

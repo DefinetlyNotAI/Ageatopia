@@ -275,3 +275,24 @@ The report is `held-out-verified-only.json`. Neither adapter was activated.
 The standard suite passed 93 tests with three real-provider tests skipped, and
 Ruff checks passed. Full live acceptance and demonstrated learning improvement
 remain open.
+
+## Tool recovery guidance
+
+The preserved cache-budgeted default run showed repeated workspace calls with code
+in `text` instead of the required `value`, receiving only the error `'value'`.
+Workspace descriptions now give a Python example, explain each operation's value,
+and identify text as write content. Missing-value errors give the same guidance
+without executing a command. Inspecting without an assigned task now explains
+how to request work instead of returning null.
+
+The unchanged six-agent acceptance test ran against real Docker and resident-capable
+Ollama for its full five-minute observation. The preserved data is in
+`.data/acceptance-tool-guidance/test_real_six_agent_acceptance0`. It recorded two
+verified tasks, 207 completed inferences, 37 context summaries, 18 notebook writes
+and 11 expressed states. Successful workspace activity continued after summaries;
+five original agents performed successful workspace commands. No inference or
+runtime error events were recorded. The experimentalist used file operations for
+calculations, skipped/re-requested work and terminated after an incorrect answer
+before a successful workspace command. The existing gate therefore still failed;
+the feedback improvement does not prove full acceptance. Focused regressions and
+the standard suite passed, and Ruff check/format passed.

@@ -110,6 +110,26 @@ async def test_answer_on_request_is_rejected_with_submission_guidance(engine):
     assert engine.agent(identity)["state"] != "TERMINATED"
 
 
+async def test_workspace_missing_value_explains_python_argument_without_executing(engine):
+    identity = next(iter(engine.state["agents"]))
+    executor = ToolExecutor(engine, FakeSandbox())
+    result = await executor.execute(
+        identity, "workspace", {"operation": "python", "text": "print(1/4)"}
+    )
+    assert "value" in result["error"] and "Python code" in result["error"]
+    assert "text" in result["error"] and "write" in result["error"]
+    assert not engine.store.event_page(engine.state["id"], kind="process.executed")
+
+
+async def test_inspecting_without_a_task_explains_how_to_request_work(engine):
+    identity = next(iter(engine.state["agents"]))
+    executor = ToolExecutor(engine, FakeSandbox())
+    result = await executor.execute(identity, "task", {"operation": "inspect"})
+    assert result == {"error": "No current task. Call task with operation=request."}
+    assert engine.agent(identity)["task_id"] is None
+    assert engine.agent(identity)["state"] != "TERMINATED"
+
+
 async def test_shared_inference_serializes_six_independent_histories(engine):
     runtime, provider = runtime_with(engine, [{"role": "assistant", "content": "Done"}] * 6)
     await asyncio.gather(*(runtime.agent_loop(identity) for identity in engine.state["agents"]))
