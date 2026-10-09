@@ -60,7 +60,7 @@ be reported as a blocker, never replaced by simulated production functionality.
 
 Observer batches retain monotonic container IDs until the host commits them and
 acknowledges delivery. Durable cursors prevent duplicate records on retry. Process
-syscall tracing supplements inventory snapshots, including short-lived children;
+kernel process-event tracing supplements inventory snapshots, including short-lived children;
 command-session records are distinguished from process lifecycle observations.
 Trace storage is bounded and overflow pauses the world. Filesystem notifications
 can coalesce writes; content checkpoints capture observed versions, not every

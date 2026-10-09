@@ -110,7 +110,7 @@ class DockerSandbox:
             if task.get("compile") and task["compile"] in files:
                 path = task["compile"]
                 # Generated challenge path, never interpolated agent input.
-                result = await self.execute("setup", f"gcc '{path}' -o '{path[:-2]}'")
+                result = await self.execute("setup", f"cc '{path}' -o '{path[:-2]}'")
                 if result["exit_code"] != 0:
                     raise SandboxUnavailable("Challenge binary compilation failed")
                 await self.execute("setup", f"rm '{path}'")

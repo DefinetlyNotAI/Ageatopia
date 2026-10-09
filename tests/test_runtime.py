@@ -187,9 +187,10 @@ async def test_observer_commits_before_acknowledging_and_deduplicates(engine, mo
             "process_changes": [
                 {
                     "uid": 10001,
-                    "syscall": "clone() = 2",
+                    "event": "clone",
+                    "child_pid": 2,
                     "observer_id": 1,
-                    "record_type": "process-syscall",
+                    "record_type": "process-lifecycle",
                 }
             ],
         }
@@ -239,5 +240,5 @@ async def test_runtime_error_pause_stops_processes_and_resolves_pending_tools(en
 def test_context_bound_includes_provider_thinking_and_tool_calls():
     with pytest.raises(ContextOverflow):
         SharedInference.context_bound(
-            [{"role": "assistant", "content": "", "thinking": "x" * 5000}], [], ModelSettings()
+            [{"role": "assistant", "content": "", "thinking": "x" * 10000}], [], ModelSettings()
         )

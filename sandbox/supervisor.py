@@ -111,12 +111,8 @@ def traced_arguments(owner, command):
     uid = owner_uid(owner)
     trace = CONTROL / f"trace-{uid}-{time.time_ns()}.log"
     return [
-        "strace",
-        "-f",
-        "-qq",
-        "-e",
-        "trace=process",
-        "-o",
+        "python",
+        "/opt/process_observer.py",
         str(trace),
         "setpriv",
         f"--reuid={uid}",
@@ -148,12 +144,14 @@ def _observe_traces():
         TRACE_OFFSETS[str(path)] = offset + complete
         uid = int(path.name.split("-")[1])
         for line in data[:complete].decode(errors="replace").splitlines():
+            record = json.loads(line)
+            if record["event"] == "observer.error":
+                OBSERVER_ERRORS.append(record["error"])
             PROCESS_CHANGES.append(
                 {
+                    **record,
                     "uid": uid,
-                    "syscall": line,
-                    "record_type": "process-syscall",
-                    "wall_ns": time.time_ns(),
+                    "record_type": "process-lifecycle",
                 }
             )
 
@@ -345,8 +343,8 @@ def run_command(request):
     observe()
     observe_traces()
     with TRACE_LOCK:
-        Path(arguments[6]).unlink(missing_ok=True)
-        TRACE_OFFSETS.pop(arguments[6], None)
+        Path(arguments[2]).unlink(missing_ok=True)
+        TRACE_OFFSETS.pop(arguments[2], None)
     PROCESS_CHANGES.append(
         {
             "pid": process.pid,

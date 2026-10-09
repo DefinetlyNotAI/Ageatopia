@@ -105,7 +105,9 @@ notifications and observed content versions rather than claiming a byte-by-byte
 trace of every CPU write. Observer overflow pauses a run visibly. Process lifecycle,
 returned reasoning, tool calls, grades, economics, inference latency and token
 counts are operator records. Agent-facing results are explicit allowlists.
-Process syscall traces cover children between inventory samples. Observer batches
+Kernel process events cover fork, clone, exec and exit between inventory samples.
+The trusted observer reads numeric kernel events rather than tracee strings.
+Observer batches
 are acknowledged only after durable database commit, with deduplication on retry.
 
 An agent that stops requesting tools becomes idle without repeated model nudges.

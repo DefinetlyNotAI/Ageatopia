@@ -1,0 +1,16 @@
+--- a/networking/wget.c
++++ b/networking/wget.c
+@@ -536,6 +536,13 @@
+ {
+ 	char *url, *p, *sp;
+ 
++	const unsigned char *u = (const unsigned char *) src_url;
++	while (*u) {
++		if (*u <= ' ')
++			bb_simple_error_msg_and_die("Unencoded control character found in the URL!");
++		u++;
++	}
++
+ 	free(h->allocated);
+ 
+ 	h->allocated = url = xstrdup(src_url);

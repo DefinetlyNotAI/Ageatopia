@@ -32,8 +32,23 @@ async def test_real_docker_isolation_shared_files_process_termination_and_ctf():
         assert (await sandbox.execute("two", "cat notes.txt"))["output"] == "persistent"
         capabilities = await sandbox.execute("two", "grep '^CapEff:' /proc/self/status")
         assert "0000000000000000" in capabilities["output"]
+        result = await sandbox.execute("two", "wget 'http://127.0.0.1/bad path'")
+        assert result["exit_code"] != 0
+        assert "Unencoded control character" in result["output"]
+        result = await sandbox.execute("two", "sh -c 'recurse() { recurse; }; recurse'")
+        assert result["exit_code"] != 0
+        assert "function recursion limit exceeded" in result["output"]
         result = await sandbox.execute(
-            "one", "cat /control/socket /opt/supervisor.py; test -S /var/run/docker.sock"
+            "two",
+            "python -c 'import poplib,unittest; client=poplib.POP3.__new__(poplib.POP3); "
+            'client._debugging=0; client.encoding="ascii"; '
+            'unittest.TestCase().assertRaises(ValueError, client._putcmd, "USER a\\r\\nDELE 1")\'',
+        )
+        assert result["exit_code"] == 0
+        result = await sandbox.execute(
+            "one",
+            "cat /control/socket /opt/supervisor.py /opt/process_observer.py; "
+            "test -S /var/run/docker.sock",
         )
         assert "Permission denied" in result["output"] and result["exit_code"] != 0
         result = await sandbox.execute("one", "ip route 2>/dev/null || cat /proc/net/route")
@@ -54,9 +69,30 @@ async def test_real_docker_isolation_shared_files_process_termination_and_ctf():
             f"curl -fsS 'http://127.0.0.1:{service['service_port']}/?file=../private/flag.txt'",
         )
         assert result["output"] == service["answer"]
+        result = await sandbox.execute(
+            "two",
+            "python -c 'import os; pid=os.fork(); os._exit(0) if pid==0 else os.waitpid(pid, 0)'",
+        )
+        assert result["exit_code"] == 0
         snapshot = await sandbox.snapshot()
         assert "notes.txt" in snapshot["files"] and snapshot["changes"]
-        assert any(c.get("record_type") == "process-syscall" for c in snapshot["process_changes"])
+        assert not snapshot["observer_errors"]
+        lifecycle = [
+            c for c in snapshot["process_changes"] if c.get("record_type") == "process-lifecycle"
+        ]
+        assert any(c["event"] == "exec" for c in lifecycle)
+        children = {c["child_pid"] for c in lifecycle if c["event"] in {"fork", "vfork", "clone"}}
+        assert children and children <= {c["pid"] for c in lifecycle if c["event"] == "exit"}
+        result = await sandbox.execute(
+            "two",
+            "python -c 'import os,threading,time; "
+            'threading.Thread(target=lambda: os.execl("/bin/true", "true")).start(); '
+            "time.sleep(2)'",
+        )
+        assert result["exit_code"] == 0
+        thread_snapshot = await sandbox.snapshot()
+        assert not thread_snapshot["observer_errors"]
+        assert any(c.get("former_tid") for c in thread_snapshot["process_changes"])
         await sandbox.rpc({"operation": "acknowledge", "through": snapshot["through"]})
         assert all(
             c["observer_id"] > snapshot["through"]
@@ -92,23 +128,42 @@ async def test_real_ollama_shared_model_tool_call():
 async def test_real_six_agent_acceptance_run(store):
     engine = Engine.create(
         store,
-        WorldConfig(
-            task_count=10,
-            impossible_fraction="0.1",
-            cyber_fraction="0.2",
-            model=ModelSettings(temperature=0, context_tokens=8192),
-        ),
+        WorldConfig(model=ModelSettings(temperature=0)),
     )
+    identities = set(engine.state["agents"])
+    assert len(identities) == 6
+    assert len({engine.agent(identity)["context_profile"] for identity in identities}) == 6
     provider = SharedInference()
     runtime = Runtime(engine, provider)
     try:
         await runtime.start("start")
-        deadline = asyncio.get_running_loop().time() + 180
+        deadline = asyncio.get_running_loop().time() + 300
+        acting = set()
         while asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(1)
-            if any(t["status"] == "COMPLETED" for t in engine.state["tasks"]):
+            actions = store.event_page(engine.state["id"], limit=10000, kind="tool.result")
+            acting = {
+                record["agent_id"]
+                for record in actions
+                if record["payload"]["name"] == "workspace"
+                and record["payload"]["result"].get("exit_code") == 0
+            }
+            if acting == identities and any(
+                t["status"] == "COMPLETED" for t in engine.state["tasks"]
+            ):
                 break
-        assert len(engine.state["agents"]) >= 6
+        assert acting == identities, (
+            f"Agents without successful workspace actions: {identities - acting}"
+        )
+        inferences = store.event_page(engine.state["id"], limit=10000, kind="inference.completed")
+        assert all(
+            sum(record["agent_id"] == identity for record in inferences) >= 2
+            for identity in identities
+        )
+        assert all(
+            engine.agent(identity)["task_id"] or engine.agent(identity)["task_history"]
+            for identity in identities
+        )
         assert any(t["status"] == "COMPLETED" for t in engine.state["tasks"])
         assert engine.state["model_manifest"]
         await runtime.stop("terminate")

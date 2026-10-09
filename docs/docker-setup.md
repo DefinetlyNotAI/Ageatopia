@@ -78,9 +78,9 @@ caches and fixing that initial instruction resolved these observed failures.
 The operator backend was restarted with the new CLI path and reports both Docker
 and Ollama ready. Open a fresh terminal to pick up the system Docker PATH change.
 
-## Sandbox image security: 2026-10-09
+## Earlier sandbox image scan: 2026-10-09
 
-The sandbox now uses digest-pinned Python 3.14.8 on Alpine 3.24, upgrades installed
+The first security rebuild used digest-pinned Python 3.14.8 on Alpine 3.24, upgrades installed
 OS packages, and installs only the required compiler, process tools, curl, strace,
 and setpriv rather than the full util-linux collection. It retains the worker UID
 and group 10000. The unused pip installer and its ensurepip bootstrap wheels are
@@ -140,3 +140,53 @@ task completion with final workspace capture. The standard suite passes 56 tests
 with the three integrations skipped unless explicitly enabled. Resolving the
 remaining findings needs maintained upstream fixes and scanner metadata updates;
 removing required tools or hiding the findings would not satisfy the request.
+
+
+## Current sandbox image: security follow-up
+
+The expected local tag is `agent-utopia-world:1`. The image is built locally;
+Docker Hub has no public repository to pull under that name. Rebuild with the
+Windows setup command in README.md if this local tag is deleted.
+
+The image uses digest-pinned official Python 3.15.0rc3 on Alpine 3.24. This is a
+release candidate, selected because the installed stable branch lacked the POP3
+command and temporary-directory security fixes. The interpreter includes control
+character rejection and directory-descriptor-based permission cleanup.
+
+Clang/LLVM 22 replaces GNU binutils and supplies `cc`, `gcc`, `ld`, `objdump`,
+`strings`, `nm` and `readelf`. Compilation uses compiler-rt and LLD. Trusted
+numeric ptrace process events replace strace, including short-lived children and
+thread exec ID changes; the observer never decodes mutable tracee filename buffers.
+
+BusyBox 1.38.0 is built from the official checksum-verified source archive with
+four published security patches. It is registered as a real APK with its actual
+source origin and version. Source compilation dependencies remain in the builder
+stage. Agent programs retain the existing unprivileged UID and resource limits.
+Python installers remain removed. The kernel and custom drivers are unchanged.
+
+Patch sources and authors:
+
+- Radoslav Kolev: [wget URL validation](https://lists.busybox.net/pipermail/busybox/2025-November/091840.html).
+- Sanghyun Park: [AWK replacement storage](https://lists.busybox.net/pipermail/busybox/2026-June/092352.html),
+  [shell IFS cleanup](https://lists.busybox.net/pipermail/busybox/2026-June/092360.html),
+  and [shell function recursion](https://lists.busybox.net/pipermail/busybox/2026-June/092354.html).
+
+The final unfiltered scans use the same databases recorded above:
+
+| Scanner | Findings | Report |
+| --- | --- | --- |
+| Grype 0.120.1 | 5 version matches; no ignored findings | `.data/image-vulnerabilities-final.json` |
+| Trivy 0.75.0 | 0 | `.data/image-trivy-final.json` |
+
+None of the nine reported binutils/strace CVEs remain. Grype retains
+CVE-2026-87910 and CVE-2026-12345 against Python 3.15.0rc3, whose fixes are included
+in that release candidate, and CVE-2026-38753/38754/38755 against BusyBox 1.38.0,
+whose source patches are included in this build. These NVD version matches do not
+account for those fixes. No ignore rules, version relabeling, package exclusions,
+or VEX suppression were used. A zero-finding unfiltered Grype result remains
+unachieved. Docker Scout still requires account sign-in for an independent scan.
+
+The real integration suite exercises malformed URL rejection, shell recursion
+limits, POP3 injection rejection, C compilation, capability/network isolation,
+process lifecycles, non-leader thread exec, permanent termination, filesystem
+recovery, real Ollama tool calls and all six initial agents acting.

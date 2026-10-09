@@ -50,7 +50,7 @@ Production dependencies are clean. No unverified forced downgrade was applied.
 Linux filesystem notifications may coalesce consecutive writes. Operator records
 contain notifications plus content checkpoints; they cannot guarantee every
 intermediate byte version. File access evidence identifies paths, never intention
-or authorship. Syscall process records and sampled process inventories are
+or authorship. Kernel process events and sampled process inventories are
 explicitly different event types. Ordinary process inspection can reveal OS
 instrumentation, although its controls/data remain protected.
 
@@ -76,3 +76,30 @@ detour through unassigned workspace files. The final six-agent smoke run passed 
 48.53 seconds, including task completion and final workspace capture. All three
 real integrations pass individually; the standard suite passes 56 tests with the
 three integrations skipped by default. Full generational acceptance remains unverified.
+
+
+## Verified persona, challenge and security follow-up
+
+Commit `2159b02` adds six distinct default expertise profiles and 80 seeded tasks,
+including 24 independently checked recipe types. The real dashboard creation
+form shows all six profiles and the expanded task bank. A retained world named
+**Six-agent verification** was started through the dashboard; all six agents
+issued workspace calls before the world was paused. Older saved worlds and
+presets retain their original profiles and 40-task conditions.
+
+The real Docker/Ollama suite passed all three integrations in 39.65 seconds on
+the current image. It verifies C compilation, isolation, short-lived process
+tracking, non-leader thread exec, termination, durable recovery, URL validation,
+shell recursion limits, POP3 command rejection, real provider tool calls and
+six-agent activity with a completed task and final workspace capture.
+
+The standard suite passes 61 tests with three integrations skipped; Ruff lint
+and format checks pass. The empty-provider-response regression verifies retry
+with backoff and unchanged history. No model actions or answers are fabricated.
+
+The current image is tagged `agent-utopia-world:1`; its nine reported
+binutils/strace findings are absent. Trivy reports zero; Grype reports five
+version matches against patched Python/BusyBox, with no ignores or exclusions.
+See docker-setup.md for patch provenance, exact remaining advisories and scanner
+coverage. A zero-finding unfiltered Grype result remains unachieved. No sustained
+multi-generation benchmark or training result is claimed.

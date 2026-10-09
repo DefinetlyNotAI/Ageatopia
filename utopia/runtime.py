@@ -183,7 +183,7 @@ class Runtime:
             changes += [
                 (
                     "process.observed"
-                    if change.get("record_type") == "process-syscall"
+                    if change.get("record_type") in {"process-syscall", "process-lifecycle"}
                     else "process.command-started"
                     if change.get("record_type") == "command-session" and change.get("after")
                     else "process.command-finished"
