@@ -297,7 +297,9 @@ Use `--mode submissions --max-output-tokens 256` for a separate single-turn
 mathematical submission check with the real tool definitions. This mode requires
 a checkpoint chat template using `<tool_call>` tags. It grades only an explicit
 `task` submit call, preserves malformed raw outputs, and executes no generated
-tools. It does not replace full simulation validation.
+tools. Ordinary assistant text can accompany the call, matching the simulation
+runtime. Multiple calls and invalid submission arguments are rejected. It does not
+replace full simulation validation.
 `GET /comparison` compares model/context outcomes across runs. For real provider
 benchmarks, run `python -m utopia.benchmark --models qwen3.5:2b qwen3.5:0.8b`.
 

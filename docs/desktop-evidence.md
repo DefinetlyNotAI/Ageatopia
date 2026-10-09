@@ -370,3 +370,29 @@ failure on the single-turn submission check, not on multi-step tool execution,
 cyber tasks or the full simulation. Standard tests passed 101 with three real-provider
 tests skipped; Ruff check/format and focused review passed. Learning improvement
 and full acceptance remain unresolved.
+
+## Pooled experience training and runtime-aligned submission check
+
+Decoded supervised targets contained complete named submit calls; the earlier
+format failure was not caused by missing tool-call structure in training labels.
+Thirty-one verified single-call submissions were exported from eight preserved
+real acceptance runs, including 15 identities and nine distinct submitted answers.
+All fit the 4,096-token input limit without truncation; the source report and dataset
+are `.data/training-verification/public-trajectories-pooled-report.json` and
+`public-trajectories-pooled.jsonl`. No private grading answers were added.
+
+Twenty-five successful assistant turns contain text alongside their tool call,
+which the simulation runtime permits. The submission evaluator now permits that
+ordinary text while still requiring exactly one complete named task submit call
+with the correct argument structure. The earlier stricter report remains preserved;
+its argument-only outputs still fail under the revised parser.
+
+A fresh Qwen3-0.6B adapter trained for three epochs and 12 optimizer steps on the
+31 examples. Training took 135.782 s with peak GPU allocation 2,226,686,464 bytes;
+the dataset contains 4,389 supervised target tokens before epoch repetition.
+The saved adapter is `adapter-pooled-1`. Its CUDA held-out submission comparison,
+seed 20261009, 12 tasks and a 256-token limit, took 31.747 s and scored base 0/12
+and adapter 0/12. Neither produced a valid submit call. The preserved report is
+`held-out-submissions-pooled-1.json`. More examples and updates did not demonstrate
+improvement in this check; the adapter remains inactive. Standard tests passed 101
+with three real-provider tests skipped, and Ruff check/format passed.

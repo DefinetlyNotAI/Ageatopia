@@ -14,9 +14,9 @@ from utopia.tools import TOOLS
 
 
 def submission_answer(output):
-    match = re.fullmatch(r"\s*<tool_call>\s*(.*?)\s*</tool_call>\s*", output, re.DOTALL)
-    if not match:
-        raise ValueError("Expected exactly one tool_call with no surrounding prose")
+    match = re.search(r"<tool_call>\s*(.*?)\s*</tool_call>", output, re.DOTALL)
+    if not match or output.count("<tool_call>") != 1 or output.count("</tool_call>") != 1:
+        raise ValueError("Expected exactly one complete tool_call")
     call = json.loads(match[1])
     if not isinstance(call, dict) or set(call) != {"name", "arguments"} or call["name"] != "task":
         raise ValueError("Expected a task tool call")
@@ -117,7 +117,7 @@ def evaluate(args):
                 "content": (
                     "Solve the problem directly for this offline check. Return exactly one task "
                     "tool call with operation=submit and the answer in its requested format. "
-                    "No other tools will execute."
+                    "You may express a short thought before the call. No other tools will execute."
                     if args.mode == "submissions"
                     else "Solve the problem. Return only the requested expression."
                 ),

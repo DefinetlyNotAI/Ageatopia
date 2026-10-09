@@ -19,9 +19,9 @@ def test_submission_evaluation_accepts_only_one_explicit_submit_call():
         '<tool_call>{"name":"task","arguments":{"operation":"submit","answer":"7"}}</tool_call>'
     )
     assert submission_answer(output) == "7"
+    assert submission_answer("I checked the calculation.\n" + output) == "7"
     for invalid in (
         "7",
-        "Here is the answer: " + output,
         output + output,
         output.replace('"submit"', '"request"'),
         output.replace('"task"', '"workspace"'),
