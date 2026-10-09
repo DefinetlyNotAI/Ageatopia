@@ -131,7 +131,7 @@ class ToolExecutor:
                     return engine.skip(identity)
                 case "submit":
                     return engine.submit(identity, args.get("answer"), self.sandbox.available)
-            raise ValueError("Unknown task operation")
+            raise ValueError("Task operation must be request, inspect, skip or submit")
         if name == "lifetime":
             return {"remaining_ms": engine.personal_state(identity)["remaining_ms"]}
         if name == "rename":

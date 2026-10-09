@@ -481,6 +481,13 @@ class Runtime:
                         "\nRelevant excerpts from your own notebook and experience:\n"
                         + "\n".join(notes)
                     )
+                if state_note:
+                    state_note += (
+                        f"\nYour current task is {task['id']}. Continue solving it with the tools."
+                        if task
+                        else "\nYou have no assigned task. "
+                        "Call task with operation=request to begin work."
+                    )
                 supplemental = [{"role": "user", "content": state_note}] if state_note else []
                 if not await self.manage_context(identity, supplemental):
                     return
