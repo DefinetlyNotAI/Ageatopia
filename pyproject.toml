@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115,<1", "uvicorn[standard]>=0.34,<1", "httpx>=0.28,<1",
   "sqlalchemy>=2.0,<3", "sympy>=1.13,<2", "pydantic>=2.10,<3",
-  "pyarrow>=20,<24",
+  "pyarrow>=20,<24", "textual>=1.0,<7",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +19,9 @@ training = ["torch>=2.6", "transformers>=4.50,<6", "peft>=0.15,<1", "datasets>=3
 
 [project.scripts]
 utopia = "utopia.cli:main"
+utopia-desktop = "utopia.desktop:main"
+utopia-control = "utopia.control:main"
+utopia-maintenance = "utopia.maintenance:main"
 
 [tool.setuptools.packages.find]
 include = ["utopia*"]

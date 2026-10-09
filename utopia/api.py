@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
@@ -106,12 +106,12 @@ def create_app(directory=None, store=None, token=None):
         return {"status": "ok", "schema_version": 1}
 
     @app.post("/shutdown", dependencies=protected)
-    async def shutdown():
+    async def shutdown(background_tasks: BackgroundTasks):
         callback = getattr(app.state, "shutdown", None)
         if callback is None:
             raise HTTPException(409, "This server is not managed by the desktop launcher")
         app.state.shutdown_requested = True
-        callback()
+        background_tasks.add_task(callback)
         return {"status": "stopping"}
 
     @app.get("/system", dependencies=protected)

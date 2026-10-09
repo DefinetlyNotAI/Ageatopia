@@ -9,3 +9,5 @@ dashboard/.next/
 dashboard/.env.local
 *.egg-info/
 *.tsbuildinfo
+native/.packages/
+native/build/
