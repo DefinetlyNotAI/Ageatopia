@@ -488,3 +488,33 @@ Verification passed 106 standard tests with three integration tests deselected,
 Ruff check/format and focused review. The previously recorded live acceptance pass
 remains evidence for that run; this cancellation fix was checked by its focused
 reproduction and the standard suite.
+
+## Four-bit adapter continuation
+
+The saved `adapter-pooled-1.7b-nf4-1` was resumed with iteration two into a fresh
+`adapter-pooled-1.7b-nf4-2` directory, retaining the NF4 double-quantized base.
+The attempted dataset update added zero rows because of the observer-cancellation
+issue above. `public-trajectories-pooled-v2.jsonl` contains the same 31 existing
+examples, reserialized with hash
+`c0dfd0d77212cac741555293f76524072844f2f219752e5ada5d4a552d967394`.
+No new experience or reconstructed historic tool message is claimed for this update.
+
+Two further epochs and eight optimizer steps completed in 184.794 s including
+save, with peak GPU allocation 4,079,186,944 bytes and training loss 0.411352.
+All 392 saved LoRA tensors changed from the parent. The manifest and completed
+event retain the original parent metadata, both dataset versions, identities,
+iteration and quantization mode. This verifies periodic weight continuation on
+the local GPU; the lower training loss does not establish held-out improvement.
+
+The same paired CUDA submission protocol compared this continued adapter with its
+disabled-adapter base on both seeds, using both lineage datasets for held-out
+exclusion. Seed 20261009 scored base 0/12 and adapter 1/12 in 178.716 s; the gained
+answer was the Boolean conjunction count. Seed 20261010 scored base 0/12 and
+adapter 1/12 in 177.115 s; the gained answer was the exact probability `5/26` for
+drawing two red balls from six red and seven blue without replacement. This is a
+small repeated gain across two task samples, while overall accuracy remains 1/12
+per sample. It does not establish improved multi-step simulation behavior or justify
+automatic activation. Reports are `held-out-submissions-pooled-1.7b-nf4-2.json`
+and `held-out-submissions-pooled-1.7b-nf4-2-seed20261010.json`. Saved weights hash
+`8377853ab058d71762eb2d2c8b42945a88dcf630cc41c675149809edd5644fd5` identifies
+the actual compared adapter. GPU memory returned to zero after evaluation.
