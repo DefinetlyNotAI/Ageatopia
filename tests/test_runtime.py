@@ -101,6 +101,15 @@ async def test_autonomous_tool_loop_requests_and_solves_real_engine_task(engine)
     )
 
 
+async def test_answer_on_request_is_rejected_with_submission_guidance(engine):
+    identity = next(iter(engine.state["agents"]))
+    executor = ToolExecutor(engine, FakeSandbox())
+    result = await executor.execute(identity, "task", {"operation": "request", "answer": "42"})
+    assert "operation=submit" in result["error"]
+    assert engine.agent(identity)["task_id"] is None
+    assert engine.agent(identity)["state"] != "TERMINATED"
+
+
 async def test_shared_inference_serializes_six_independent_histories(engine):
     runtime, provider = runtime_with(engine, [{"role": "assistant", "content": "Done"}] * 6)
     await asyncio.gather(*(runtime.agent_loop(identity) for identity in engine.state["agents"]))

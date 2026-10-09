@@ -122,6 +122,8 @@ class ToolExecutor:
     async def _dispatch(self, identity, name, args):
         engine = self.engine
         if name == "task":
+            if args["operation"] != "submit" and args.get("answer") is not None:
+                raise ValueError("To submit an answer, use task with operation=submit")
             match args["operation"]:
                 case "request":
                     return engine.request_task(identity)
