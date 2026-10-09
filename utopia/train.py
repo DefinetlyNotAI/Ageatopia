@@ -2,9 +2,85 @@
 
 import argparse
 import hashlib
+import inspect
 import json
 import time
 from pathlib import Path
+
+
+def verified_submission_index(messages):
+    if not messages or messages[-1].get("role") != "tool":
+        raise ValueError("Training trajectory must end with a verified task result")
+    result = messages[-1]
+    outcome = json.loads(result.get("content", "{}"))
+    if (
+        result.get("name") != "task"
+        or not isinstance(outcome, dict)
+        or outcome.get("status") != "Verified"
+    ):
+        raise ValueError("Training trajectory must end with a verified task result")
+    index = next(
+        (i for i in range(len(messages) - 2, -1, -1) if messages[i].get("role") == "assistant"),
+        None,
+    )
+    if index is None:
+        raise ValueError("Verified result has no assistant submission")
+    calls = messages[index].get("tool_calls", [])
+    if (
+        len(calls) != 1
+        or not result.get("tool_call_id")
+        or calls[0].get("id") != result["tool_call_id"]
+    ):
+        raise ValueError("Training target must contain exactly one verified submission")
+    call = calls[0].get("function", {})
+    arguments = call.get("arguments", {})
+    if isinstance(arguments, str):
+        arguments = json.loads(arguments)
+    if (
+        call.get("name") != "task"
+        or not isinstance(arguments, dict)
+        or set(arguments) != {"operation", "answer"}
+        or arguments["operation"] != "submit"
+        or not isinstance(arguments["answer"], str)
+    ):
+        raise ValueError("Training target must be a task submit call with an answer")
+    return index
+
+
+def verified_sample(tokenizer, messages, max_length):
+    from utopia.tools import TOOLS
+
+    index = verified_submission_index(messages)
+    prefix = tokenizer.apply_chat_template(
+        messages[:index],
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
+        tools=TOOLS,
+    )
+    text = tokenizer.apply_chat_template(
+        messages[: index + 1],
+        tokenize=False,
+        enable_thinking=False,
+        tools=TOOLS,
+    )
+    without_calls = messages[:index] + [
+        {key: value for key, value in messages[index].items() if key != "tool_calls"}
+    ]
+    if text == tokenizer.apply_chat_template(
+        without_calls, tokenize=False, enable_thinking=False, tools=TOOLS
+    ):
+        raise ValueError("Chat template omitted the verified tool call")
+    encoded = tokenizer(text, add_special_tokens=False, truncation=False)
+    prefix_ids = tokenizer(prefix, add_special_tokens=False, truncation=False)["input_ids"]
+    if encoded["input_ids"][: len(prefix_ids)] != prefix_ids:
+        raise ValueError("Chat template cannot safely separate context from the assistant target")
+    if len(encoded["input_ids"]) > max_length:
+        raise ValueError("Trajectory exceeds max-length; no silent training truncation")
+    if len(prefix_ids) >= len(encoded["input_ids"]):
+        raise ValueError("Chat template omitted the verified assistant target")
+    encoded["labels"] = [-100] * len(prefix_ids) + encoded["input_ids"][len(prefix_ids) :]
+    return encoded
 
 
 def main():
@@ -71,7 +147,7 @@ def train(args):
     from transformers import (
         AutoModelForCausalLM,
         AutoTokenizer,
-        DataCollatorForLanguageModeling,
+        DataCollatorForSeq2Seq,
         Trainer,
         TrainingArguments,
     )
@@ -87,11 +163,7 @@ def train(args):
     tokenizer.pad_token = tokenizer.pad_token or tokenizer.eos_token
     samples = []
     for row in rows:
-        text = tokenizer.apply_chat_template(row["messages"], tokenize=False)
-        encoded = tokenizer(text, truncation=False)
-        if len(encoded["input_ids"]) > args.max_length:
-            raise SystemExit("Trajectory exceeds max-length; no silent training truncation")
-        samples.append(encoded)
+        samples.append(verified_sample(tokenizer, row["messages"], args.max_length))
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         trust_remote_code=False,
@@ -106,7 +178,24 @@ def train(args):
         )
     model.config.use_cache = False
     model.enable_input_require_grads()
-    trainer = Trainer(
+    restrict_logits = (
+        "logits_to_keep" in inspect.signature(model.get_base_model().forward).parameters
+    )
+
+    class SubmissionTrainer(Trainer):
+        def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+            labels = inputs.pop("labels")
+            positions = torch.nonzero((labels[:, 1:] != -100).any(dim=0), as_tuple=True)[0]
+            outputs = model(**inputs, logits_to_keep=positions)
+            targets = labels[:, positions + 1]
+            loss = torch.nn.functional.cross_entropy(
+                outputs.logits.float().reshape(-1, outputs.logits.shape[-1]),
+                targets.reshape(-1),
+                ignore_index=-100,
+            )
+            return (loss, outputs) if return_outputs else loss
+
+    trainer = (SubmissionTrainer if restrict_logits else Trainer)(
         model=model,
         args=TrainingArguments(
             output_dir=str(args.output),
@@ -119,8 +208,10 @@ def train(args):
             seed=42,
         ),
         train_dataset=Dataset.from_list(samples),
-        data_collator=DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False),
+        data_collator=DataCollatorForSeq2Seq(tokenizer=tokenizer, label_pad_token_id=-100),
     )
+    if restrict_logits:
+        trainer.model_accepts_loss_kwargs = False
     started = time.perf_counter()
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
@@ -135,6 +226,11 @@ def train(args):
         "agent_identities": sorted({r["agent_id"] for r in rows}),
         "context_versions": sorted({r["context_version"] for r in rows}),
         "continuous_training": False,
+        "training_objective": "verified-assistant-submission-only",
+        "restricted_vocab_projection": restrict_logits,
+        "supervised_tokens": sum(
+            sum(label != -100 for label in sample["labels"]) for sample in samples
+        ),
         "parent_adapter": parent,
         "training_seconds": round(time.perf_counter() - started, 3),
         "training_metrics": metrics,

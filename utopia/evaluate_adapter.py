@@ -112,6 +112,11 @@ def evaluate(args):
         "schema_version": 1,
         "model_version": args.model,
         "adapter_version": manifest["adapter_version"],
+        "adapter_path": str(args.adapter.resolve()),
+        "adapter_weights_version": hashlib.sha256(
+            (args.adapter / "adapter_model.safetensors").read_bytes()
+        ).hexdigest(),
+        "training_objective": manifest.get("training_objective"),
         "training_dataset_version": manifest["dataset_version"],
         "seed": args.seed,
         "task_count": len(tasks),

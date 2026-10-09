@@ -242,3 +242,36 @@ Ruff check/format, dashboard lint and production build passed. Live access depen
 the tested Docker Desktop WSL volume path; other layouts report an explicit error
 and retain the separate snapshot action. No live mapping is claimed on untested
 Docker backends.
+
+## Verified-submission training and allocation
+
+Public successful trajectories can contain earlier invalid operations. Training
+now masks their loss, along with all context and tool results, and supervises only
+the assistant submission matched to the final verified task result. It rejects
+mixed target calls, mismatched result IDs, omitted template tool calls and silent
+truncation. Padding preserves the masked labels. Evaluation reports identify the
+actual adapter directory, weight hash and training objective.
+
+The preserved Qwen3-0.6B public trajectory contains 3,618 input tokens with the
+actual tool definitions; 161 assistant-target tokens are supervised. A first
+masked run projecting vocabulary logits for every context position failed during
+CUDA backward allocation. Selecting only the causal prediction positions for
+supervised tokens retained the full input and completed a fresh update in 5.380 s
+at a measured peak allocation of 1,804,917,248 bytes. A separate numerical comparison
+on the final 512 tokens found a loss difference of 0.000005126 from the standard
+masked loss. This diagnostic used a shorter input; the actual training did not.
+
+Continuation into a fresh directory completed in 5.379 s at the same measured
+peak allocation, preserving parent lineage and changing 392 adapter tensors.
+The outputs are `adapter-verified-only-2` and `adapter-verified-only-3` under
+`.data/training-verification`; older adapters and failed-run events are retained.
+Training loss decreased from 0.5361 to 0.4451 on this single repeated example.
+That is evidence of weight updates, not held-out improvement.
+
+The fresh adapter's seed-20261009 evaluation still scored 1/12 for both base and
+adapter; 11 answers were identical. Its weight SHA-256 is
+`13ab5a36adcca9f9388dfb35285ec759a16b6e26acbb469a55e0663b1783d3d0`.
+The report is `held-out-verified-only.json`. Neither adapter was activated.
+The standard suite passed 93 tests with three real-provider tests skipped, and
+Ruff checks passed. Full live acceptance and demonstrated learning improvement
+remain open.

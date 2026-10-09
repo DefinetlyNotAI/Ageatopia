@@ -251,6 +251,12 @@ model weights. LoRA training is a separate, explicitly invoked command:
 Hardware and model support determine whether training fits; use a separate GPU or
 offline window. Adapters must be packaged into the inference backend by the operator.
 The adapter manifest records dataset hash, iteration, model, identities and contexts.
+Training targets only the final assistant submission confirmed by a verified task
+result. Earlier errors, dialogue and tool results remain context with their loss
+masked. The tokenizer must preserve tool calls; overlong trajectories are rejected
+instead of silently truncated. Models supporting selected-position vocabulary
+projection avoid allocating logits for masked context tokens while retaining the
+full context. Other models use the standard masked loss.
 The pipeline appends versioned started/completed/failed records to
 `OUTPUT.training-events.jsonl` beside the adapter directory. These offline events
 are separate from world events; no background weight-training service is enabled.

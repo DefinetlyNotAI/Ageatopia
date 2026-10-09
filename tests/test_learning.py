@@ -11,7 +11,72 @@ from utopia.evaluate_adapter import evaluation_tasks
 from utopia.runtime import Runtime
 from utopia.store import Store, events
 from utopia.tools import ToolExecutor
-from utopia.train import train
+from utopia.train import train, verified_sample, verified_submission_index
+
+
+def test_training_target_excludes_prior_errors_and_requires_one_verified_submission():
+    bad = {
+        "role": "assistant",
+        "tool_calls": [
+            {"id": "bad", "function": {"name": "task", "arguments": {"operation": "solve"}}}
+        ],
+    }
+    good = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "good",
+                "function": {"name": "task", "arguments": {"operation": "submit", "answer": "7"}},
+            }
+        ],
+    }
+    result = {
+        "role": "tool",
+        "name": "task",
+        "tool_call_id": "good",
+        "content": '{"status":"Verified"}',
+    }
+    messages = [
+        bad,
+        {
+            "role": "tool",
+            "name": "task",
+            "tool_call_id": "bad",
+            "content": '{"error":"invalid operation"}',
+        },
+        good,
+        result,
+    ]
+    assert verified_submission_index(messages) == 2
+    good["tool_calls"].append(bad["tool_calls"][0])
+    with pytest.raises(ValueError, match="exactly one"):
+        verified_submission_index(messages)
+    good["tool_calls"].pop()
+    result["content"] = '{"status":"Rejected"}'
+    with pytest.raises(ValueError, match="verified task result"):
+        verified_submission_index(messages)
+
+
+def test_training_rejects_a_chat_template_that_drops_tool_calls():
+    messages = [
+        {"role": "user", "content": "Solve the task"},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "one",
+                    "function": {
+                        "name": "task",
+                        "arguments": {"operation": "submit", "answer": "7"},
+                    },
+                }
+            ],
+        },
+        {"role": "tool", "name": "task", "tool_call_id": "one", "content": '{"status":"Verified"}'},
+    ]
+    tokenizer = SimpleNamespace(apply_chat_template=lambda messages, **kw: "prompt and answer")
+    with pytest.raises(ValueError, match="omitted the verified tool call"):
+        verified_sample(tokenizer, messages, 4096)
 
 
 def test_adapter_evaluation_excludes_training_prompts_and_requires_complete_lineage(tmp_path):
