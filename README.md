@@ -300,6 +300,7 @@ same deterministic decoding for both models, and grades generated answers withou
 putting private validators into model context. Existing reports are preserved.
 This evaluates mathematical answers; tool use, cyber tasks and full simulation
 performance still need separate validation. Evaluation never activates an adapter.
+
 Use `--mode submissions --max-output-tokens 256` for a separate single-turn
 mathematical submission check with the real tool definitions. This mode requires
 a checkpoint chat template using `<tool_call>` tags. It grades only an explicit
@@ -309,6 +310,30 @@ runtime. Multiple calls and invalid submission arguments are rejected. It does n
 replace full simulation validation.
 `GET /comparison` compares model/context outcomes across runs. For real provider
 benchmarks, run `python -m utopia.benchmark --models qwen3.5:2b qwen3.5:0.8b`.
+
+### Deploying a saved adapter through Ollama
+
+Ollama 0.40.1 rejects direct LoRA imports. On this Windows installation, direct
+Safetensors imports also fail because its MLX runtime is unavailable. Use the
+official llama.cpp converters and merge tool to create a full GGUF model instead.
+The verified tool revision is v0.6.0, commit
+`d81235049384534c167caea52b85a694f6103d14`; build its `llama-export-lora` target
+with CMake and Visual Studio. Run these commands from that source directory,
+substituting the matching local base checkpoint and adapter paths:
+
+```powershell
+python convert_hf_to_gguf.py BASE_CHECKPOINT --outfile base-f16.gguf --outtype f16 --use-temp-file
+python convert_lora_to_gguf.py ADAPTER_DIRECTORY --base BASE_CHECKPOINT --outfile adapter.gguf --outtype f16
+.\build\bin\Release\llama-export-lora.exe -m base-f16.gguf --lora adapter.gguf -o merged-f16.gguf
+```
+
+Create a Modelfile containing `FROM ./merged-f16.gguf`, then use
+`ollama create YOUR_MODEL_NAME -f Modelfile`. Keep the base model import available
+for paired comparisons. Select the new model explicitly in world configuration
+only after validation. An NF4-trained adapter merged into an F16 base has different
+numerics from offline evaluation; reevaluate the deployed models and simulation
+behavior. Importing a candidate does not change existing worlds or activate it
+automatically. See `docs/desktop-evidence.md` for actual deployment results.
 
 ## Verification
 

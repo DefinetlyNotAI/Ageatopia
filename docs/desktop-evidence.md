@@ -518,3 +518,41 @@ automatic activation. Reports are `held-out-submissions-pooled-1.7b-nf4-2.json`
 and `held-out-submissions-pooled-1.7b-nf4-2-seed20261010.json`. Saved weights hash
 `8377853ab058d71762eb2d2c8b42945a88dcf630cc41c675149809edd5644fd5` identifies
 the actual compared adapter. GPU memory returned to zero after evaluation.
+
+## Continued adapter deployment on Windows
+
+Installed Ollama 0.40.1 explicitly rejects LoRA adapter imports in its create
+handler. A direct import of the matching Qwen3-1.7B Safetensors base failed with
+MLX dynamic library unavailable. No failed import was treated as a deployed model.
+
+The official llama.cpp v0.6.0 source, commit
+`d81235049384534c167caea52b85a694f6103d14`, was built with VS2022/CMake, CPU only,
+for its export tool. Both official converters succeeded after installing their
+required sentencepiece dependency in the local venv. The base was converted to
+F16 GGUF and the continued adapter to F16 GGUF. The merge applied its recorded
+alpha/rank scale of 2, modified 196 base tensors and wrote all 311 tensors.
+The full merged model imported successfully through Ollama under
+`ageatopia-qwen3-continued-verification:latest`; the matching base imported under
+`ageatopia-qwen3-base-verification:latest`. Neither is the application default.
+
+The deployed merged model ran through the actual SharedInference client with all
+application tools and returned a valid workspace Python call to compute 2 + 3.
+It did not directly submit the requested answer. Cold latency was 14,656 ms
+(load 7,517 ms, prompt 6,353 ms); the identical warm request took 1,115 ms
+(load 16 ms, prompt 322 ms). First returned output was at 14,655/1,113 ms;
+these tool-only responses do not measure first natural-language-token latency.
+Ollama reported 4.4 GB, 100 percent GPU, 8,192 context and persistent residency.
+The verification model was explicitly unloaded afterward.
+
+Ignored local artifact `gguf-deployment-verification.json` records file sizes,
+converter revision and hashes. Base GGUF hash is
+`0519188ea5be1772defc9b7ed72afbea6315e30c94116672e2de043ff4212cdf`;
+merged GGUF hash is
+`f52eed6bafba3591bc7a5928a2757d03fc99c02f412352b782efd66a0bc0e160`.
+Conversion/import logs and cold/warm client reports remain under
+`.data/training-verification`. This verifies a deployable full-model path; F16
+deployment differs from the NF4 evaluation base and requires a new paired quality
+comparison. No live simulation effectiveness or automatic activation is claimed.
+
+The requested RELAX and recurring-bonus regression surface was rechecked:
+70 engine/runtime tests passed.
