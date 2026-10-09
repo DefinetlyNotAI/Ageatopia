@@ -223,6 +223,25 @@ async def test_default_context_policy_summarizes_and_continues(engine):
     assert record["payload"]["source_messages"] == len(history) - 1
     assert engine.store.event_page(engine.state["id"], kind="agent.message") == original_messages
     assert len(provider.histories) == 1
+    provider.responses.extend(
+        [
+            call("request"),
+            call("submit", engine.state["tasks"][0]["answer"]),
+            {"role": "assistant", "content": "Finished"},
+        ]
+    )
+    await runtime.agent_loop(identity)
+    row = public_trajectories(engine.store, engine.state)[0]
+    trajectory = row["messages"]
+    assert row["observed_task_prompts"]
+    assert trajectory[0] == history[0]
+    assert trajectory[1] == {
+        "role": "user",
+        "content": "Your earlier working notes:\nWorking notes: preserve the observed facts.",
+    }
+    assert not any("Observed fact:" in message.get("content", "") for message in trajectory)
+    assert trajectory[:-2] == provider.histories[-2]
+    assert trajectory[-2] == call("submit", engine.state["tasks"][0]["answer"])
 
 
 async def test_docker_missing_never_executes_agent_code_on_host(monkeypatch):
@@ -231,6 +250,27 @@ async def test_docker_missing_never_executes_agent_code_on_host(monkeypatch):
 
     with pytest.raises(SandboxUnavailable, match="Host execution is disabled"):
         await DockerSandbox("test", ToolSettings()).execute("agent", "echo unsafe")
+
+
+async def test_mixed_tool_success_is_not_exported_as_a_single_submission_target(engine):
+    identity = next(iter(engine.state["agents"]))
+    submission = call("submit", engine.state["tasks"][0]["answer"])
+    submission["tool_calls"].append(
+        {
+            "id": "call-note",
+            "type": "function",
+            "function": {
+                "name": "memory",
+                "arguments": {"operation": "write", "text": "Check before submitting."},
+            },
+        }
+    )
+    runtime, _ = runtime_with(
+        engine, [call("request"), submission, {"role": "assistant", "content": "Finished"}]
+    )
+    await runtime.agent_loop(identity)
+    assert engine.state["tasks"][0]["status"] == "COMPLETED"
+    assert public_trajectories(engine.store, engine.state) == []
 
 
 async def test_unknown_tools_and_malformed_calls_are_natural_errors(engine):

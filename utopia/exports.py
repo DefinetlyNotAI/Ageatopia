@@ -68,17 +68,37 @@ def public_trajectories(store, state):
         # Only trajectories through a successful verified submission qualify for training.
         messages = []
         verified = False
+        supplemental = None
+        inference_messages = []
+        observed_task_prompts = set()
         for record in all_events(store, state["id"]):
             if record["agent_id"] != agent["id"]:
                 continue
             if record["kind"] == "agent.created":
                 messages = record["payload"]["history"].copy()
+            elif record["kind"] == "task.assigned":
+                observed_task_prompts.add(record["payload"]["task"]["prompt"])
             elif record["kind"] == "memory.context":
-                messages.append({"role": "user", "content": record["payload"]["content"]})
+                supplemental = {"role": "user", "content": record["payload"]["content"]}
+            elif record["kind"] == "context.summarized":
+                messages = [
+                    messages[0],
+                    {
+                        "role": "user",
+                        "content": "Your earlier working notes:\n"
+                        + record["payload"]["summary"].get("content", ""),
+                    },
+                ]
+                supplemental = None
             elif record["kind"] == "task.completed":
                 verified = True
             elif record["kind"] == "agent.message":
                 message = record["payload"]
+                if message.get("role") == "assistant":
+                    inference_messages = messages.copy()
+                    if supplemental:
+                        inference_messages.append(supplemental)
+                    supplemental = None
                 messages.append(
                     {
                         key: value
@@ -88,15 +108,23 @@ def public_trajectories(store, state):
                 )
                 if not (verified and message.get("role") == "tool"):
                     continue
+                assistant_index = next(
+                    i
+                    for i in range(len(messages) - 2, -1, -1)
+                    if messages[i]["role"] == "assistant"
+                )
+                verified = False
+                if len(messages[assistant_index].get("tool_calls", [])) != 1:
+                    continue
                 rows.append(
                     {
                         "agent_id": agent["id"],
                         "model_version": agent["model_version"],
                         "context_version": agent["context_version"],
-                        "messages": messages.copy(),
+                        "observed_task_prompts": sorted(observed_task_prompts),
+                        "messages": inference_messages + messages[assistant_index:],
                     }
                 )
-                verified = False
     return rows
 
 

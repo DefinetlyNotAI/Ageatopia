@@ -296,3 +296,30 @@ calculations, skipped/re-requested work and terminated after an incorrect answer
 before a successful workspace command. The existing gate therefore still failed;
 the feedback improvement does not prove full acceptance. Focused regressions and
 the standard suite passed, and Ruff check/format passed.
+
+## Training export context fidelity
+
+The export previously retained discarded pre-summary history, omitted the actual
+summary, and accumulated ephemeral memory supplements as if they were durable
+conversation. Export now reconstructs the history reset and includes only the
+supplement used for the successful submission inference. A regression compares the
+exported prompt exactly with the provider's recorded input after summarization.
+Mixed-tool success turns are omitted rather than fabricated into single-call
+targets; a regression verifies the task remains completed while that turn is omitted.
+
+Own observed public task prompts remain separate metadata, so held-out evaluation
+can exclude them after their original tool messages have been summarized away.
+Legacy full-history exports remain accepted; summarized exports without prompt
+metadata are rejected for evaluation. No private validators or answers enter this metadata.
+The two verified tasks from the latest live run exported as five-message trajectories
+and passed target validation. The versioned dataset is
+`.data/training-verification/public-trajectories-tool-guidance-v2.jsonl`.
+
+A fresh Qwen3-0.6B CUDA adapter trained on these two examples in 3.340 s, supervising
+55 tokens with peak allocation 1,486,101,504 bytes. Its saved report
+`held-out-summarized-1.json` scored base 1/12 and adapter 0/12 for seed 20261009.
+This small dataset worsened the held-out result; the adapter was not activated.
+Correct context reconstruction and successful weight training do not demonstrate
+improved agent performance. Standard verification passed 96 tests with three
+real-provider tests skipped; Ruff check/format passed. Full acceptance and learning
+quality remain unresolved.

@@ -156,7 +156,9 @@ def train(args):
         json.loads(line) for line in args.dataset.read_text(encoding="utf-8").splitlines() if line
     ]
     if not rows or any(
-        set(row) != {"agent_id", "model_version", "context_version", "messages"} for row in rows
+        set(row) - {"observed_task_prompts"}
+        != {"agent_id", "model_version", "context_version", "messages"}
+        for row in rows
     ):
         raise SystemExit("Use a public training-data export, never a private research export")
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)

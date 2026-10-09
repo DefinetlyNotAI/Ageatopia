@@ -257,6 +257,9 @@ masked. The tokenizer must preserve tool calls; overlong trajectories are reject
 instead of silently truncated. Models supporting selected-position vocabulary
 projection avoid allocating logits for masked context tokens while retaining the
 full context. Other models use the standard masked loss.
+Exports preserve the actual summarized submission context and retain observed
+public task prompts separately for held-out exclusion. Successful turns containing
+multiple tool calls are omitted because they are not isolated submission targets.
 The pipeline appends versioned started/completed/failed records to
 `OUTPUT.training-events.jsonl` beside the adapter directory. These offline events
 are separate from world events; no background weight-training service is enabled.

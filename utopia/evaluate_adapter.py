@@ -28,11 +28,27 @@ def evaluation_tasks(adapter, training_data, model, seed, count):
         if line
     ]
     if not rows or any(
-        set(row) != {"agent_id", "model_version", "context_version", "messages"} for row in rows
+        set(row) - {"observed_task_prompts"}
+        != {"agent_id", "model_version", "context_version", "messages"}
+        for row in rows
     ):
         raise ValueError("Use the public training-data export")
     training_prompts = set()
     for row in rows:
+        if "observed_task_prompts" not in row and any(
+            message.get("role") == "user"
+            and message.get("content", "").startswith("Your earlier working notes:\n")
+            for message in row["messages"]
+        ):
+            raise ValueError(
+                "Summarized exports require observed task prompts for held-out exclusion"
+            )
+        prompts = row.get("observed_task_prompts", [])
+        if not isinstance(prompts, list) or any(not isinstance(prompt, str) for prompt in prompts):
+            raise ValueError("Observed task prompts must be a list of public prompt strings")
+        training_prompts.update(
+            prompt.split(" Submit one plain mathematical")[0] for prompt in prompts
+        )
         for message in row["messages"]:
             if message.get("role") != "tool" or message.get("name") != "task":
                 continue

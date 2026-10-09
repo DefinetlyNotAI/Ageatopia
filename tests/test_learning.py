@@ -107,6 +107,20 @@ def test_adapter_evaluation_excludes_training_prompts_and_requires_complete_line
     (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     _, tasks = evaluation_tasks(tmp_path, [dataset], "base", 20261009, 12)
     assert len(tasks) == 12 and original["prompt"] not in {task["prompt"] for task in tasks}
+    row = json.loads(dataset.read_text())
+    row["observed_task_prompts"] = [public_task(original)["prompt"]]
+    row["messages"] = [{"role": "user", "content": "Your earlier working notes:\nTask notes"}]
+    dataset.write_text(json.dumps(row), encoding="utf-8")
+    manifest["dataset_version"] = hashlib.sha256(dataset.read_bytes()).hexdigest()
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    _, tasks = evaluation_tasks(tmp_path, [dataset], "base", 20261009, 12)
+    assert len(tasks) == 12 and original["prompt"] not in {task["prompt"] for task in tasks}
+    del row["observed_task_prompts"]
+    dataset.write_text(json.dumps(row), encoding="utf-8")
+    manifest["dataset_version"] = hashlib.sha256(dataset.read_bytes()).hexdigest()
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="Summarized exports require"):
+        evaluation_tasks(tmp_path, [dataset], "base", 20261009, 12)
     with pytest.raises(ValueError, match="base model"):
         evaluation_tasks(tmp_path, [dataset], "different", 20261009, 12)
     manifest["parent_adapter"] = {"dataset_version": "missing"}
