@@ -1,7 +1,9 @@
 # Agent Utopia
 
 A local autonomous agent world, private grader and live operator observatory.
-Python owns simulation state; Next.js displays recorded application state.
+Python owns simulation state; a native Windows WebView2 window hosts the responsive
+observatory, with Next.js rendering recorded application state. The host is written
+in C using Win32 windowing, COM, native menus, DPI-aware resizing and WebView2.
 Agent code executes **only inside Docker**. No host shell fallback exists.
 
 ## Windows setup
@@ -22,7 +24,40 @@ Use the installed Python version selector if it differs from `-3.12`.
 Use `qwen3.5:0.8b` in the world settings for a smaller model.
 The Python lock was resolved using Python 3.14 on Windows; the source supports 3.12+.
 
-Start the operator backend in one terminal:
+For first-time setup, run the maintenance console. Its bootstrap creates the Python
+environment; use **Install dependencies**, **Build dashboard**, **Build sandbox image**,
+**Build native host**, and **Run diagnostics** before launching the application:
+
+```powershell
+.\maintain.ps1
+```
+
+Launch the desktop application, which starts and manages both local services:
+
+```powershell
+.\run.ps1
+```
+
+Closing the standalone desktop window gracefully pauses simulations, persists state,
+removes owned Docker environments, and shuts down its servers. Existing servers on
+the configured ports cause a visible error; the launcher never takes ownership of them.
+The Windows WebView2 runtime is required. Building the C host requires Visual Studio
+Build Tools with the C compiler and Windows SDK; `native/build.ps1` retrieves the
+pinned Microsoft WebView2 SDK from NuGet. Desktop services bind only to loopback.
+
+The centralized terminal control room configures worlds, launches the desktop,
+controls simulation lifecycle, shows status and structured logs, and confirms erasure:
+
+```powershell
+.\.venv\Scripts\python.exe -m utopia.control
+```
+
+`utopia-maintenance` and `utopia-control` are separate installed console commands.
+Desktop ports and the data directory are configured in `.data/desktop.json`; all three
+interfaces accept `--config PATH`. World settings remain strict configuration JSON.
+Logs are written under the configured data directory's `logs` folder.
+
+For development, the backend can still run separately:
 
 ```powershell
 .\.venv\Scripts\python.exe -m utopia.cli
@@ -59,10 +94,12 @@ request another task after a submission or skip. The creation form
 exposes the base system instructions directly. Existing worlds and saved presets
 keep their exact original prompts and profiles.
 
-Pause or terminate a running world before using **Delete world**. Deletion removes
-the world from the active list and preserves its database, snapshots and immutable
-events. **Deleted worlds** in the sidebar lets you restore it, including after a
-server restart. This control does not permanently erase research records.
+Pause or terminate a running world before using **Delete world**.
+After confirmation, deletion removes its sandbox, run-owned snapshot directories,
+database state, agent notebooks and event records. Other worlds remain untouched.
+Erasure is the explicit exception to append-only observation. There is no restore
+operation. Previously downloaded exports and independently created model adapters
+remain outside world ownership and are not erased by this operation.
 
 Task counts must represent the requested impossible fraction exactly: the default
 80 tasks contain 72 solvable tasks and eight impossible tasks. Difficulty is an
@@ -120,6 +157,52 @@ of silently truncating. Other model tokenizers may need a larger configured budg
 GPU metrics come from `nvidia-smi`; missing measurements remain unavailable.
 Only one run can be active at a time so multiple worlds cannot bypass GPU concurrency.
 
+## Desktop observation and persistent learning
+
+Charts support hover inspection, zoom, pan, keyboard sample selection, follow-latest,
+and sample tables. Alt+1 through Alt+6 switch world sections. Arrow keys navigate
+tabs and chart samples. Entity links connect agents, tasks and evidence.
+Agent dialogue, reflections and notebooks render Markdown, tables, highlighted code
+and inline/display LaTeX. Raw HTML and arbitrary host file links are not executed.
+Workspace file links select the corresponding file in an exported sandbox snapshot.
+
+The agent inspector separates lifecycle state, model output, reported feelings,
+intentions, dialogue, learning and persistent notebooks. These are recorded expressions,
+not access to hidden thoughts. `reflect` records short self-reports in the personal
+notebook; observed task outcomes are also recorded automatically. Relevant personal
+notes are retrieved into subsequent contexts. Set `termination_fear` from 0 (disabled)
+to 1 to scale time-dependent survival pressure; the signal falls when rewards add time.
+No other identities' private memory or hidden task classifications enter retrieval.
+
+Optional `embedding_model` uses a full Ollama model settings object for batched
+semantic ranking of up to 64 lexical/recent candidate experiences. For example,
+`{"model":"embeddinggemma:latest","context_tokens":2048}`. It must be installed;
+model errors are reported. Defaults use lexical retrieval to avoid loading another
+model unnecessarily. Memory and expressions survive pause, resume and application
+restart with the same agent identity. Replacement agents are new identities, and
+Repeat conditions intentionally creates a fresh experiment.
+
+**Open sandbox snapshot** refreshes the shared Docker workspace into a run-owned,
+per-agent host directory and opens File Explorer. Editing that inspection copy does
+not change the executing container. The complete notebook is beside its sandbox folder.
+Inspector windows retain bounded live event and transcript windows; complete data
+remains in research exports.
+
+Ollama models are preloaded at their actual configured context size before simulation
+time starts or resumes. `model.keep_alive` defaults to `-1`, requesting residency;
+Ollama still manages allocation when available memory cannot hold every model.
+Default GPU placement remains automatic; `gpu_layers` can explicitly control layers
+for a supported Ollama backend. Streamed inference records first output, model load,
+prompt evaluation and generation timings. Measure this machine using:
+
+```powershell
+.\.venv\Scripts\python.exe -m utopia.latency --repeat 5
+# Explicitly unload the selected model before measuring cold warmup:
+.\.venv\Scripts\python.exe -m utopia.latency --cold --repeat 5
+```
+
+See [desktop verification and learning evaluation](docs/desktop-evidence.md).
+
 ## Research data and reproducibility
 
 The dashboard exports JSON (complete registry, config, snapshots and events), CSV
@@ -149,6 +232,12 @@ The adapter manifest records dataset hash, iteration, model, identities and cont
 The pipeline appends versioned started/completed/failed records to
 `OUTPUT.training-events.jsonl` beside the adapter directory. These offline events
 are separate from world events; no background weight-training service is enabled.
+Periodic offline updates can continue an adapter using `--resume-adapter PREVIOUS`
+and a higher `--iteration`, writing each update into a new `--output` directory.
+Manifests retain parent lineage, dataset hash, training metrics, device and peak GPU
+allocation. Actual training and quality improvement require a compatible unquantized
+base model, training dependencies and evaluation; Ollama inference weights alone are
+not a training checkpoint.
 `GET /comparison` compares model/context outcomes across runs. For real provider
 benchmarks, run `python -m utopia.benchmark --models qwen3.5:2b qwen3.5:0.8b`.
 
