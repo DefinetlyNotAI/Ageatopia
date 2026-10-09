@@ -173,7 +173,23 @@ def test_delete_removes_orphan_container_even_before_manifest_commit(tmp_path, m
     with TestClient(create_app(tmp_path, token="test-operator")) as client:
         world = client.post("/runs", headers=HEADERS, json={}).json()["id"]
         assert client.delete(f"/runs/{world}?confirm={world}", headers=HEADERS).status_code == 200
-        assert calls[-1] == (f"utopia-{world}", ("rm", "-f", f"utopia-{world}"))
+        assert (f"utopia-{world}", ("rm", "-f", f"utopia-{world}")) in calls
+        assert calls[-1][1][:3] == ("volume", "ls", "-q")
+
+
+def test_delete_removes_orphan_workspace_volume_without_a_container(tmp_path, monkeypatch):
+    calls = []
+
+    async def docker(self, *args, **kwargs):
+        calls.append(args)
+        return self.volume.encode() if args[:2] == ("volume", "ls") else b""
+
+    monkeypatch.setattr("utopia.api.shutil.which", lambda _: "docker")
+    monkeypatch.setattr("utopia.api.DockerSandbox._docker", docker)
+    with TestClient(create_app(tmp_path, token="test-operator")) as client:
+        world = client.post("/runs", headers=HEADERS, json={}).json()["id"]
+        assert client.delete(f"/runs/{world}?confirm={world}", headers=HEADERS).status_code == 200
+        assert calls[-1] == ("volume", "rm", f"utopia-{world}-workspace")
 
 
 def test_docker_startup_error_with_zero_cli_exit_is_not_ready(tmp_path, monkeypatch):

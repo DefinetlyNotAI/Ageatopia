@@ -45,6 +45,15 @@ async def test_real_docker_isolation_shared_files_process_termination_and_ctf():
         result = await sandbox.execute("one", "printf persistent > notes.txt")
         assert result["exit_code"] == 0
         assert (await sandbox.execute("two", "cat notes.txt"))["output"] == "persistent"
+        expected_notes = "persistent"
+        if os.name == "nt":
+            live_file = sandbox.live_directory() / "notes.txt"
+            assert live_file.read_text() == "persistent"
+            live_file.write_text("edited in the live directory", encoding="utf-8")
+            expected_notes = "edited in the live directory"
+            assert (await sandbox.execute("two", "cat notes.txt"))["output"] == (
+                "edited in the live directory"
+            )
         capabilities = await sandbox.execute("two", "grep '^CapEff:' /proc/self/status")
         assert "0000000000000000" in capabilities["output"]
         result = await sandbox.execute("two", "wget 'http://127.0.0.1/bad path'")
@@ -115,7 +124,7 @@ async def test_real_docker_isolation_shared_files_process_termination_and_ctf():
         )
         await sandbox.stop()
         await sandbox.start(snapshot["files"], tasks)
-        assert (await sandbox.execute("replacement", "cat notes.txt"))["output"] == "persistent"
+        assert (await sandbox.execute("replacement", "cat notes.txt"))["output"] == expected_notes
     finally:
         await sandbox.stop()
 

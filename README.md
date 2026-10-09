@@ -174,7 +174,8 @@ and sample tables. Alt+1 through Alt+6 switch world sections. Arrow keys navigat
 tabs and chart samples. Entity links connect agents, tasks and evidence.
 Agent dialogue, reflections and notebooks render Markdown, tables, highlighted code
 and inline/display LaTeX. Raw HTML and arbitrary host file links are not executed.
-Workspace file links select the corresponding file in an exported sandbox snapshot.
+Workspace file links select the corresponding live sandbox file while the container
+is available, or a recorded snapshot file after it closes.
 
 The agent inspector separates lifecycle state, model output, reported feelings,
 intentions, dialogue, learning and persistent notebooks. These are recorded expressions,
@@ -192,9 +193,17 @@ model unnecessarily. Memory and expressions survive pause, resume and applicatio
 restart with the same agent identity. Replacement agents are new identities, and
 Repeat conditions intentionally creates a fresh experiment.
 
-**Open sandbox snapshot** refreshes the shared Docker workspace into a run-owned,
-per-agent host directory and opens File Explorer. Editing that inspection copy does
-not change the executing container. The complete notebook is beside its sandbox folder.
+**Open sandbox directory** opens the actual shared Docker workspace in File Explorer
+while its container is available, including a paused world whose container remains
+allocated. File edits affect the simulation. This requires Docker Desktop's WSL
+backend and its exposed Linux volume filesystem on Windows. The workspace uses a
+run-owned, size-limited tmpfs volume, preserving Linux permissions and isolation;
+it is removed when the sandbox closes or the world is deleted.
+**Open snapshot** remains a separate inspection action. When no container is
+available, **Open sandbox snapshot** refreshes recorded files into a run-owned,
+per-agent host directory. Editing that copy does not change the sandbox. The complete
+notebook is beside its snapshot folder. If the live WSL path is unavailable, the
+interface reports that failure and offers the explicit snapshot action.
 Inspector windows retain bounded live event and transcript windows; complete data
 remains in research exports.
 

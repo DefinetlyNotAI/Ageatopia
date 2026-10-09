@@ -100,7 +100,7 @@ applied to the different Qwen3.5 base used by the default inference model.
 
 ## Verification ledger
 
-- Python suite: 90 passed, three real-provider tests skipped in the standard run.
+- Python suite: 91 passed, three real-provider tests skipped in the standard run.
   This includes task-request guidance and adding the event lookup index to an
   existing database without losing its world, resource-error reporting and early
   adapter validation, model-server ownership, cache configuration and TUI configuration
@@ -122,9 +122,9 @@ applied to the different Qwen3.5 base used by the default inference model.
   bounded logging. Narrow control panes scroll, all actions remain keyboard
   reachable, and the world table retains eight rows of height. Maintenance
   diagnostics include the native executable, Docker, Ollama, GPU and disk.
-- Explorer: the UI action opened the agent's world-owned snapshot directory in
-  Windows File Explorer. Host snapshots are inspection copies of the shared Docker
-  workspace, not editable mounts of the live sandbox.
+- Explorer: the updated native inspector opened the actual shared sandbox tmpfs
+  volume in Windows File Explorer. A separate action opens a recorded snapshot.
+  Host snapshots remain inspection copies; live directory edits affect Docker files.
 - Real providers: Docker isolation/process/CTF verification passed separately;
   the real Ollama tool-call test passed. Batch embedding retrieval produced 768-value
   vectors and retrieved the relevant latency note in a semantic search.
@@ -210,11 +210,35 @@ has not been activated; a larger, better-curated dataset and further evaluation 
 still needed before claiming improvement. The standard suite now passes 90 tests,
 with three real-provider tests skipped; Ruff check and formatting pass.
 
-## Live Explorer directory investigation
+## Live Explorer directory verification
 
 A real temporary Docker sandbox verified that WSL can read a changing workspace
 through the daemon's process/mount namespace. Windows UNC access to that path was
 inaccessible, and a bind-mount exposure attempt failed. All temporary containers and
-mount directories were removed. No stable live Explorer mapping was installed;
-the existing button remains explicitly labeled as a snapshot. Opening the actual
-live sandbox directory remains unfinished.
+mount directories were removed. A standard Docker local tmpfs volume subsequently
+provided the live workspace through Docker Desktop's exposed WSL volume filesystem,
+without namespace surgery or copying files. `/workspace` now mounts the exact
+run-owned `utopia-RUN_ID-workspace` volume with the configured size limit and nosuid.
+
+Direct verification confirmed container-to-Windows reads, Windows-to-container
+edits, a 16 MiB quota rejecting further writes, and an agent UID being denied access
+to another agent's mode-600 file. The observer recorded modifications without errors.
+The existing real Docker integration test passed with live-directory editing and
+restoration after closing/recreating the sandbox, alongside isolation, CTF and
+process-termination checks.
+
+The actual C/Win32 inspector displayed **Open sandbox directory** and **Open snapshot**.
+Explorer opened the live `_data` directory containing `explorer-live-check.txt`; the
+API reported `workspace-live`. The explicit snapshot action separately returned
+`workspace-snapshot` and the same recorded contents. Path escape was rejected with
+409. The paused verification world's container remained available, so its live
+directory could still be inspected.
+
+Confirmed deletion of that world removed its exact container, named volume and
+run-owned snapshot directory; subsequent API lookup returned 404. Regression coverage
+also checks removal of an orphan volume when no container remains. Standard tests
+passed 91 with three integration tests skipped; the real Docker test passed separately.
+Ruff check/format, dashboard lint and production build passed. Live access depends on
+the tested Docker Desktop WSL volume path; other layouts report an explicit error
+and retain the separate snapshot action. No live mapping is claimed on untested
+Docker backends.

@@ -60,10 +60,10 @@ export function MarkdownContent({ children, className = "", onOpenFile }: {
       const path = href ? workspaceFilePath(href) : null;
       if (path) return onOpenFile
         ? <button type="button" className="markdown-file-link" title={`Open workspace file ${path}`} onClick={() => onOpenFile(path)}>{children}</button>
-        : <span title="Local file links are available from an agent workspace snapshot">{children} <small>(workspace file)</small></span>;
+        : <span title="Local file links are available from an agent workspace">{children} <small>(workspace file)</small></span>;
       if (link.kind === "internal") return <Link href={link.href} title={title}>{children}</Link>;
       if (link.kind === "file") {
-        return <span title="Only files in the shared workspace snapshot can be opened here">{children} <small>(local file)</small></span>;
+        return <span title="Only files in the shared workspace can be opened here">{children} <small>(local file)</small></span>;
       }
       return <a href={link.href} title={title} target="_blank" rel="noopener noreferrer">{children}</a>;
     },

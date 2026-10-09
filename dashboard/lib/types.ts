@@ -27,6 +27,7 @@ export type Agent = {
   task_history?: { task_id: string; result: string; elapsed_ms?: number; sim_ms: number }[];
   lifetime_history?: { sim_ms: number; delta_ms: number; balance_ms: number; reason: string }[];
   workspace_events?: EventRecord[]; workspace_event_count?: number;
+  sandbox_available?: boolean;
 };
 export type Task = {
   id: string; category: string; subtype: string; prompt: string; difficulty: number;

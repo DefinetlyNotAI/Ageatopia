@@ -38,5 +38,6 @@ Do not push. Record unverified training/hardware paths explicitly.
 
 GPU adapter training, continuation and bounded inference host-cache configuration
 are verified. Held-out math evaluation found no improvement from the saved adapter.
-Full live acceptance, improved adapter performance and live Explorer access remain unresolved;
+Live Explorer access is verified with a quota-limited Docker tmpfs volume.
+Full live acceptance and improved adapter performance remain unresolved;
 see desktop-evidence.md. The overall goal is not marked complete.

@@ -189,6 +189,8 @@ def create_app(directory=None, store=None, token=None):
                     )
                     if result.strip():
                         await sandbox.stop()
+                    else:
+                        await sandbox.remove_volume()
                 elif engine.state.get("model_manifest"):
                     raise SandboxUnavailable("Docker is required to remove this world's sandbox")
             world_dir = (directory / "worlds" / run_id).resolve()
@@ -232,37 +234,53 @@ def create_app(directory=None, store=None, token=None):
             "learning_count": len(agent.get("learning", [])),
             "workspace_events": evidence[-200:],
             "workspace_event_count": count,
+            "sandbox_available": run_id in runtimes and runtimes[run_id].sandbox.available,
         }
 
     @app.post("/runs/{run_id}/agents/{identity}/sandbox/open", dependencies=protected)
-    async def open_sandbox(run_id: str, identity: str, path: str = ""):
+    async def open_sandbox(run_id: str, identity: str, path: str = "", snapshot: bool = False):
         async with control_lock:
             engine = lookup(run_id)
             agent = engine.agent(identity)
-            if run_id in runtimes and runtimes[run_id].sandbox.available:
+            live = run_id in runtimes and runtimes[run_id].sandbox.available
+            if live:
                 await runtimes[run_id].observe()
-            root = (directory / "worlds" / run_id / "agents" / identity / "sandbox").resolve()
-            if not root.is_relative_to(directory / "worlds"):
-                raise ValueError("Invalid sandbox directory")
-            if root.exists():
-                shutil.rmtree(root)
-            root.mkdir(parents=True)
-            for name, item in engine.state["workspace"].items():
-                destination = (root / name).resolve()
-                if not destination.is_relative_to(root) or destination == root:
-                    raise ValueError("Workspace snapshot contains an invalid path")
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                if "symlink" in item:
-                    destination.write_text(
-                        "Symbolic link (inspection copy only):\n" + str(item["symlink"]),
-                        encoding="utf-8",
-                    )
-                else:
-                    destination.write_bytes(base64.b64decode(item["data"]))
-            (root.parent / "notebook.md").write_text("\n\n".join(agent["memory"]), encoding="utf-8")
+            if live and not snapshot:
+                root = runtimes[run_id].sandbox.live_directory().resolve()
+                kind = "workspace-live"
+            else:
+                root = (directory / "worlds" / run_id / "agents" / identity / "sandbox").resolve()
+                if not root.is_relative_to(directory / "worlds"):
+                    raise ValueError("Invalid sandbox directory")
+                if root.exists():
+                    shutil.rmtree(root)
+                root.mkdir(parents=True)
+                for name, item in engine.state["workspace"].items():
+                    destination = (root / name).resolve()
+                    if not destination.is_relative_to(root) or destination == root:
+                        raise ValueError("Workspace snapshot contains an invalid path")
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    if "symlink" in item:
+                        destination.write_text(
+                            "Symbolic link (inspection copy only):\n" + str(item["symlink"]),
+                            encoding="utf-8",
+                        )
+                    else:
+                        destination.write_bytes(base64.b64decode(item["data"]))
+                (root.parent / "notebook.md").write_text(
+                    "\n\n".join(agent["memory"]), encoding="utf-8"
+                )
+                kind = "workspace-snapshot"
+            relative = path.removeprefix("/workspace/")
+            if "\\" in relative or ":" in relative:
+                raise ValueError("Invalid workspace path")
+            for index in range(1, len(relative.split("/")) + 1):
+                prefix = "/".join(relative.split("/")[:index])
+                if "symlink" in engine.state["workspace"].get(prefix, {}):
+                    raise ValueError("Symbolic links cannot be opened outside the sandbox")
             target = (root / path.removeprefix("/workspace/")).resolve()
             if not target.is_relative_to(root) or not target.exists():
-                raise ValueError("File is outside this sandbox snapshot or does not exist")
+                raise ValueError("File is outside this sandbox directory or does not exist")
             if sys.platform == "win32":
                 if target.is_dir():
                     os.startfile(str(target))
@@ -275,7 +293,7 @@ def create_app(directory=None, store=None, token=None):
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
-            return {"path": str(target), "kind": "workspace-snapshot"}
+            return {"path": str(target), "kind": kind}
 
     @app.post("/runs/{run_id}/control/{action}", dependencies=protected)
     async def control(run_id: str, action: str):

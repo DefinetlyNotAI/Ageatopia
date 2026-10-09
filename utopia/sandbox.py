@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 CLIENT = (
     "import socket,sys; s=socket.socket(socket.AF_UNIX); "
@@ -19,6 +20,7 @@ class SandboxUnavailable(RuntimeError):
 class DockerSandbox:
     def __init__(self, run_id, config):
         self.name = f"utopia-{run_id}"
+        self.volume = f"{self.name}-workspace"
         self.config = config
         self.available = False
         self.started = False
@@ -54,6 +56,23 @@ class DockerSandbox:
             await self._docker("rm", "-f", self.name)
         except SandboxUnavailable:
             pass
+        await self.remove_volume()
+        await self._docker(
+            "volume",
+            "create",
+            "--driver",
+            "local",
+            "--label",
+            "agent-utopia.world=true",
+            "--opt",
+            "type=tmpfs",
+            "--opt",
+            "device=tmpfs",
+            "--opt",
+            f"o=rw,nosuid,size={self.config.workspace_mb}m,mode=0777",
+            self.volume,
+        )
+        self.started = True
         await self._docker(
             "run",
             "-d",
@@ -90,15 +109,14 @@ class DockerSandbox:
             str(self.config.cpu_count),
             "--pids-limit",
             str(self.config.pid_limit),
-            "--tmpfs",
-            f"/workspace:rw,nosuid,size={self.config.workspace_mb}m,mode=0777",
+            "--mount",
+            f"type=volume,src={self.volume},dst=/workspace,volume-nocopy",
             "--tmpfs",
             "/control:rw,noexec,nosuid,size=4m,mode=0700",
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,size=8m,mode=1777",
             self.config.image,
         )
-        self.started = True
         for attempt in range(20):
             try:
                 await self.rpc({"operation": "processes"})
@@ -164,8 +182,35 @@ class DockerSandbox:
 
     async def stop(self):
         self.available = False
-        await self._docker("rm", "-f", self.name)
+        try:
+            await self._docker("rm", "-f", self.name)
+        except SandboxUnavailable as error:
+            if "no such container" not in str(error).lower():
+                raise
+        await self.remove_volume()
         self.started = False
+
+    async def remove_volume(self):
+        names = await self._docker("volume", "ls", "-q", "--filter", f"name=^{self.volume}$")
+        if self.volume in names.decode().splitlines():
+            await self._docker("volume", "rm", self.volume)
+
+    def live_directory(self):
+        if not self.available:
+            raise SandboxUnavailable("The sandbox is not running; open its recorded snapshot")
+        if os.name != "nt":
+            raise SandboxUnavailable("Live Explorer access requires Docker Desktop's WSL backend")
+        root = (
+            Path("//wsl.localhost/docker-desktop/mnt/docker-desktop-disk/data/docker/volumes")
+            / self.volume
+            / "_data"
+        )
+        if not root.is_dir():
+            raise SandboxUnavailable(
+                "Live workspace is unavailable through Docker Desktop's WSL filesystem; "
+                "open the recorded snapshot instead"
+            )
+        return root
 
 
 def initial_workspace(tasks, existing):

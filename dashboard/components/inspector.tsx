@@ -55,15 +55,19 @@ export function Inspector({ runId, agentId, live = false, onInspectAgent, onSele
     return () => { active = false; clearInterval(timer); };
   }, [runId, agentId]);
 
-  async function openSandbox(path?: string) {
+  async function openSandbox(path?: string, snapshot = false) {
     setSandboxBusy(true); setSandboxNotice(""); setError("");
     try {
-      const query = path ? `?path=${encodeURIComponent(path)}` : "";
+      const params = new URLSearchParams();
+      if (path) params.set("path", path);
+      if (snapshot) params.set("snapshot", "true");
+      const query = params.size ? `?${params}` : "";
       const result = await api<{ path: string; kind?: string }>(
         `/runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(agentId)}/sandbox/open${query}`, "POST",
       );
       setSandboxPath(result.path);
-      setSandboxNotice(path ? "Opened the selected file in the sandbox snapshot." : "Opened the sandbox snapshot.");
+      const location = result.kind === "workspace-live" ? "live sandbox directory" : "sandbox snapshot";
+      setSandboxNotice(path ? `Opened the selected file in the ${location}.` : `Opened the ${location}.`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -102,8 +106,9 @@ export function Inspector({ runId, agentId, live = false, onInspectAgent, onSele
       <div><dt>Processes</dt><dd>{agent.processes.join(", ") || "None"}</dd></div>
       <div><dt>Charged / queue</dt><dd>{duration(agent.total_charge_ms)} / {duration(agent.queue_ms)}</dd></div></dl>
     <div className="inspector-actions"><Link className="text-link" href={`/runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(agentId)}`}>Open agent detail page ↗</Link>
-      <button type="button" onClick={() => void openSandbox()} disabled={sandboxBusy}>{sandboxBusy ? "Opening snapshot…" : "Open sandbox snapshot"}</button>
-      <small className="muted">This shared workspace snapshot is separate from the files in the running container.</small>
+      <button type="button" onClick={() => void openSandbox()} disabled={sandboxBusy}>{sandboxBusy ? "Opening…" : agent.sandbox_available ? "Open sandbox directory" : "Open sandbox snapshot"}</button>
+      {agent.sandbox_available && <button type="button" onClick={() => void openSandbox(undefined, true)} disabled={sandboxBusy}>Open snapshot</button>}
+      <small className="muted">{agent.sandbox_available ? "The directory contains the live shared Docker workspace. Edits affect the simulation." : "The container is stopped. Its recorded workspace opens as a separate snapshot."}</small>
       {sandboxNotice && <p className="notice" role="status">{sandboxNotice} <span className="mono">{sandboxPath}</span></p>}</div>
     <nav className="inspector-tabs" role="tablist" aria-label="Agent details" onKeyDown={onPanelKeyDown}>
       {PANELS.map((value, index) => <button key={value} id={`agent-panel-tab-${index}`} type="button" role="tab"
@@ -165,8 +170,8 @@ export function Inspector({ runId, agentId, live = false, onInspectAgent, onSele
         </details>
       </section>}
       {panel === "Activity" && <section>
-        <h3>Shared workspace snapshot</h3><p className="muted">The snapshot mirrors the shared Docker workspace for inspection. Changes made in the snapshot do not change the running container.</p>
-        <button type="button" onClick={() => void openSandbox()} disabled={sandboxBusy}>{sandboxBusy ? "Opening snapshot…" : "Open sandbox snapshot"}</button>
+        <h3>Shared workspace</h3><p className="muted">{agent.sandbox_available ? "Open the actual shared sandbox directory in Explorer. Edits affect the simulation." : "The recorded snapshot is available while the container is stopped."}</p>
+        <button type="button" onClick={() => void openSandbox()} disabled={sandboxBusy}>{sandboxBusy ? "Opening…" : agent.sandbox_available ? "Open sandbox directory" : "Open sandbox snapshot"}</button>
         <details className="workspace-events"><summary>Recorded file changes · latest {agent.workspace_events?.length || 0} of {agent.workspace_event_count || 0}</summary>
           <p className="muted">These events record paths used by workspace tools and subsequent modifications. They do not identify who changed a file.</p>
           {agent.workspace_events?.map(event => <details key={event.sequence}><summary>#{event.sequence} · {String(event.payload.path)}</summary><pre>{JSON.stringify(event.payload, null, 2)}</pre></details>)}
