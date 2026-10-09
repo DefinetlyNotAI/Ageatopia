@@ -556,3 +556,42 @@ comparison. No live simulation effectiveness or automatic activation is claimed.
 
 The requested RELAX and recurring-bonus regression surface was rechecked:
 70 engine/runtime tests passed.
+
+## Paired deployed-model simulation, 2026-10-10
+
+The existing benchmark command ran the matching F16 base and merged continued
+model sequentially for 300 seconds each, with seed 20261010, six default contexts,
+40 tasks, identical model settings and the real Docker sandbox. The saved run IDs
+are `685fdd5c77bc407696c9e701ec99d152` (base) and
+`540c6df9bf534bbe838f11330ea2ad6d` (continued). Both recorded the actual Ollama
+model digest. During these runs, automatic placement reported 5.1 GB,
+15 percent CPU / 85 percent GPU and 8,192 context for each model; this differs
+from the earlier smoke request with explicitly requested GPU layers.
+
+| Observed result | Base | Continued adapter merged into F16 base |
+| --- | ---: | ---: |
+| Simulation time | 300,783 ms | 300,173 ms |
+| Verified task completions | 0 | 0 |
+| Incorrect submissions | 4 | 5 |
+| Completed inferences | 228 | 285 |
+| Saved notebook entries | 5 | 5 |
+| Expressed reflections | 1 | 0 |
+| Recorded outcome experiences | 4 | 5 |
+
+Each run made only one workspace call; repeated task-tool calls dominated activity.
+More inferences therefore do not demonstrate better work or a throughput gain.
+These results provide no evidence of improved live simulation behavior and do not
+justify selecting the candidate. The small NF4 held-out gains remain evidence for
+that offline protocol, not a guarantee for F16 deployment or multi-step tool use.
+The application default remains qwen3.5:2b, which passed its separate acceptance gate.
+
+Both runs terminated normally, captured final workspace state and recorded only
+info-severity events. A fresh SQLite connection matched each complete saved state
+against its export, including the actual memories, expressions and learned outcome
+entries. This verifies retained data, not successful behavioral adaptation.
+The benchmark left no sandbox containers; its resident candidate was explicitly
+unloaded afterward. Database, exports, comparison and paired-summary.json remain
+under `.data/benchmarks/deployed-continuation-pair`.
+
+Current verification passed 106 standard tests with three integrations deselected,
+Ruff lint and formatting. Live effectiveness of trained weights remains unproven.

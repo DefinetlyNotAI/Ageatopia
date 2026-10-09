@@ -52,8 +52,14 @@ browser state or agent prompts. Both servers bind to loopback by default.
 4. Deterministic task bank and impossibility validation: implemented; generated and fixed-bank checks pass.
 5. Contexts, notebooks and respawning: implemented; automated separation/recovery checks pass.
 6. Dashboard, observation, replay and exports: implemented; browser, API, typecheck, lint and production build checks pass.
-7. Recovery, reproducibility and metrics: implemented; recovery/export tests pass and the local NVIDIA GPU is detected. Sustained population benchmarking remains unverified.
-8. Optional offline training and comparison: implemented; public trajectory/comparison checks pass. Actual weight training has not been run.
+7. Recovery, reproducibility and metrics: implemented; recovery/export tests pass and the local NVIDIA GPU is detected. The unchanged real six-agent acceptance gate passed. Sustained generational performance remains separate from that acceptance result.
+8. Optional offline training and comparison: implemented and exercised on the local GPU, including four-bit LoRA continuation and held-out comparisons. A continued adapter gained one answer over its base on each of two held-out task seeds, with low overall accuracy. The saved adapter was merged into a full GGUF model and ran through the application inference client on Ollama. A paired five-minute simulation completed zero tasks with either deployed model; live improvement remains unproven and automatic activation stays disabled.
+
+The desktop rebuild adds a C Win32/WebView2 host, separate application and
+maintenance TUIs, live graphs, formatted agent content and live Explorer access.
+See desktop-evidence.md for rendered checks, measured inference timings, current
+acceptance results and retained negative training evidence. Earlier evidence.md
+entries describe their dated snapshots, not the current training status.
 
 Real Docker/Ollama acceptance is a separate verification gate. Missing Docker must
 be reported as a blocker, never replaced by simulated production functionality.
