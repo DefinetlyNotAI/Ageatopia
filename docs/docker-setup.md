@@ -190,3 +190,43 @@ The real integration suite exercises malformed URL rejection, shell recursion
 limits, POP3 injection rejection, C compilation, capability/network isolation,
 process lifecycles, non-leader thread exec, permanent termination, filesystem
 recovery, real Ollama tool calls and all six initial agents acting.
+
+## Finding the local image and reclaiming storage
+
+The sandbox image is local to Docker Desktop's `desktop-linux` engine. In Docker
+Desktop, open **Images** and select **Local**. Check the expected tag from a
+terminal with `docker image ls agent-utopia-world`. If the image store was reset
+or the tag was deleted, rebuild from the repository root:
+
+```powershell
+docker build -t agent-utopia-world:1 sandbox
+```
+
+Keep this image even when Docker calls it unused: the application creates its
+containers only when a world starts. `docker builder prune --all --force` removes
+rebuildable compilation cache while retaining the tagged image. Avoid an
+indiscriminate image or volume prune when preserving the application's resources.
+
+The 2026-10-09 cleanup removed obsolete kernel/module copies, the Docker reinstall
+backup and downloaded installer, duplicate WSL module-image staging, and generated
+kernel build outputs. Kernel source, configuration, symbol metadata, original
+configuration records, installed custom drivers and the active kernel/module VHDX
+were retained. The configuration hash and active Windows kernel/module hashes
+were checked after cleanup. The rebuilt image passed the real Docker integration.
+
+Deleted files inside a dynamic WSL disk do not necessarily shrink its Windows
+file. Filesystems were trimmed before offline virtual-disk compaction. Microsoft's
+[Optimize-VHD documentation](https://learn.microsoft.com/powershell/module/hyper-v/optimize-vhd)
+requires a read-only attachment for Full mode; otherwise it uses Prezeroed mode.
+Local cleanup and compaction measurements are recorded under `.data/`.
+
+Measured Windows file reclamation was approximately 27.7 GB: 7.1 GB of obsolete
+files plus the Kali disk shrinking from 41.3 GB to 20.8 GB. Docker's existing
+build cache and dangling images were also pruned after restart. Its data disk
+remained approximately 9.6 GB; the final compaction elevation was canceled, so
+that additional logical free space is not included in the Windows total.
+
+Normal image updates do not require a full Docker or WSL backup. The deleted
+reinstall backup was a recovery copy from the earlier Docker repair. Build cache
+and superseded image layers are separate from backups and can be cleaned without
+duplicating the whole data disk.
