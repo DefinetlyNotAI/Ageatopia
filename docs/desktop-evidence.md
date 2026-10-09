@@ -61,11 +61,49 @@ No automatic adapter activation or unmeasured claim of improved weights is made.
 See [PEFT LoRA](https://huggingface.co/docs/peft/main/package_reference/lora) and
 [Ollama model import](https://docs.ollama.com/import).
 
+## GPU adapter verification, 2026-10-09
+
+Installed the optional training dependencies and the official CUDA 13.0 PyTorch
+wheel. The actual training environment used torch 2.14.1+cu130, transformers 5.19.0
+and peft 0.21.2 on the NVIDIA RTX 3050 6 GB laptop GPU. The test checkpoint was
+[Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B), whose tokenizer template
+preserves tool calls. A smaller inspected checkpoint's template omitted those calls,
+so it was not used for this experiment.
+
+The dataset was one public trajectory exported from a real verified task, totaling
+3,008 tokens after the checkpoint's chat template. Each iteration performed one
+optimizer update with the existing rank-8 LoRA training command:
+
+| Iteration | Training runtime | Training loss | Saved lineage |
+| --- | ---: | ---: | --- |
+| 1 | 5.207 s | 1.6129 | No parent |
+| 2 | 4.609 s | 1.4680 | Parent lora-1 |
+
+The second command used `--resume-adapter` and a separate output directory. All 392
+saved adapter tensors changed, both adapters were retained, and the second manifest
+records the first manifest as its parent. Invalid base/iteration arguments are now
+rejected before loading training dependencies or weights. Peak CUDA allocation was
+6,896,579,584 bytes, exceeding physical VRAM; this run does not establish that a
+larger training workload will fit without Windows shared-memory spillover.
+
+Importing PyTorch concurrently with a resident 4B inference model exhausted Windows
+committed memory and caused a Docker CLI process to fail. After releasing that
+experiment's inference model, training and continuation succeeded. Pause the world
+and release competing inference allocations before training on this machine.
+Docker process-creation failures and failed pause cleanup now become structured
+events, with regression coverage, rather than an unobserved clock-task exception.
+
+These checks prove weight updates, persistence and adapter continuation. Lower
+training loss on one trajectory does not prove improved held-out task performance.
+No adapter was activated in the simulation, and these Qwen3 weights must not be
+applied to the different Qwen3.5 base used by the default inference model.
+
 ## Verification ledger
 
-- Python suite: 77 passed, three real-provider tests skipped in the standard run.
+- Python suite: 81 passed, three real-provider tests skipped in the standard run.
   This includes task-request guidance and adding the event lookup index to an
-  existing database without losing its world. Ruff passed. The remaining FastAPI
+  existing database without losing its world, resource-error reporting and early
+  adapter validation. Ruff passed. The remaining FastAPI
   TestClient warning comes from its current httpx compatibility layer.
 - Dashboard: lint and production build passed. Rendered inspection covered desktop
   and 390-pixel layouts, agent reports and notebook content, link navigation, live
@@ -87,9 +125,9 @@ See [PEFT LoRA](https://huggingface.co/docs/peft/main/package_reference/lora) an
 - Real providers: Docker isolation/process/CTF verification passed separately;
   the real Ollama tool-call test passed. Batch embedding retrieval produced 768-value
   vectors and retrieved the relevant latency note in a semantic search.
-- Open acceptance issue: three five-minute six-agent runs failed the existing full
-  acceptance test (three, then four, then four original agents executed a successful
-  workspace command). Recorded activity included autonomous calls, context summaries,
+- Open acceptance issue: the initial three five-minute six-agent runs failed the
+  existing full acceptance test (three, then four, then four original agents executed
+  a successful workspace command). Recorded activity included autonomous calls, context summaries,
   expressions and notebook entries, but did not meet the verified-completion
   threshold. The second run recorded an incorrect submission. A raw Ollama stream
   check confirmed distinct tool IDs/indexes were assembled correctly; logs also
@@ -97,11 +135,33 @@ See [PEFT LoRA](https://huggingface.co/docs/peft/main/package_reference/lora) an
   path now explicitly rejects misplaced answers with submission guidance. That
   follow-up has targeted regression coverage; its live acceptance run still failed
   because two original agents did not execute a successful workspace command.
+  Two subsequent preserved 2B runs reached three and five original agents with
+  successful workspace commands, with one verified task in each. The public
+  mathematical prompt now explains the required expression format, and tool
+  descriptions distinguish submission from requesting work. An initial 4B run
+  completed seven tasks before the concurrent-import memory failure described above.
+  An isolated 4B follow-up completed ten tasks before another committed-memory
+  failure at 266.9 simulated seconds, with training stopped. Reducing prompt batches
+  to 256 then completed the full five-minute observation with nine verified tasks,
+  no runtime error, and one retryable empty response. Five original agents performed
+  successful workspace commands, so the existing acceptance assertion still failed.
+  The default model remains 2B.
 - `npm audit --omit=dev`: zero vulnerabilities. Nine advisory entries remain in
   existing development tooling; unrelated major upgrades were not forced.
 
-Actual LoRA weight training has not been run: this environment does not currently
-contain torch, transformers or peft, or an unquantized training checkpoint. The
-continued-adapter command and evaluation procedure enable explicit offline updates;
-model improvement from trained weights remains unverified. Memory-based adaptation
-changes no model weights. The overall goal remains active pending acceptance work.
+Actual GPU LoRA training and adapter continuation have passed as described above.
+Improvement in held-out simulation tasks and adapter activation remain unverified.
+Memory-based adaptation changes no model weights. The overall goal remains active
+pending acceptance work.
+
+## Remaining host-cache work
+
+The live runner log recorded 19 cached prompts totaling 6,086.672 MiB against an
+8,192 MiB host-cache limit. Runner committed memory grew with repeated prompt
+switches. This matches the mechanism in the
+[upstream Ollama report](https://github.com/ollama/ollama/issues/18264) and the
+[llama.cpp host-cache option](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md).
+The documented runner environment variable `LLAMA_ARG_CACHE_RAM` can bound this
+cache separately from keeping model weights resident. Applying and validating a
+smaller limit through the operator tooling remains work in progress; the prompt
+batch setting alone is not claimed to solve host-cache pressure.

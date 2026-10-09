@@ -36,4 +36,6 @@ cold/warm measurements and separate hardware limits from implemented improvement
 Commit simulation, desktop controls and observatory changes as coherent themes.
 Do not push. Record unverified training/hardware paths explicitly.
 
-Implementation deliverables are committed. Full live acceptance and actual adapter training remain unverified; see desktop-evidence.md. The overall goal is not marked complete.
+GPU adapter training and continuation are verified. Full live acceptance, held-out
+adapter quality and bounded inference host-cache configuration remain unresolved;
+see desktop-evidence.md. The overall goal is not marked complete.
