@@ -2,6 +2,7 @@ import asyncio
 import os
 import uuid
 
+import httpx
 import pytest
 
 from utopia.config import ModelSettings, ToolSettings, WorldConfig
@@ -19,6 +20,20 @@ pytestmark = [
         reason="Set UTOPIA_INTEGRATION=1 for real providers",
     ),
 ]
+
+
+@pytest.fixture(autouse=True)
+async def unload_test_model():
+    try:
+        yield
+    finally:
+        settings = ModelSettings()
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                f"{settings.base_url.rstrip('/')}/api/generate",
+                json={"model": settings.model, "keep_alive": 0},
+            )
+            response.raise_for_status()
 
 
 async def test_real_docker_isolation_shared_files_process_termination_and_ctf():

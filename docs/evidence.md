@@ -87,7 +87,7 @@ form shows all six profiles and the expanded task bank. A retained world named
 issued workspace calls before the world was paused. Older saved worlds and
 presets retain their original profiles and 40-task conditions.
 
-The real Docker/Ollama suite passed all three integrations in 39.65 seconds on
+The real Docker/Ollama suite passed all three integrations in 53.95 seconds on
 the current image. It verifies C compilation, isolation, short-lived process
 tracking, non-leader thread exec, termination, durable recovery, URL validation,
 shell recursion limits, POP3 command rejection, real provider tool calls and
@@ -98,8 +98,15 @@ and format checks pass. The empty-provider-response regression verifies retry
 with backoff and unchanged history. No model actions or answers are fabricated.
 
 The current image is tagged `agent-utopia-world:1`; its nine reported
-binutils/strace findings are absent. Trivy reports zero; Grype reports five
-version matches against patched Python/BusyBox, with no ignores or exclusions.
-See docker-setup.md for patch provenance, exact remaining advisories and scanner
-coverage. A zero-finding unfiltered Grype result remains unachieved. No sustained
-multi-generation benchmark or training result is claimed.
+binutils/strace findings are absent. Trivy and Grype both report zero findings
+after upgrading BusyBox to the checksum-verified, pinned upstream `1.39.0.git`
+revision with the remaining security patches applied. No custom ignores,
+package exclusions, version relabeling or VEX suppression were used. See
+docker-setup.md for source provenance, image identity and scanner reports.
+No sustained multi-generation benchmark or training result is claimed.
+
+`scripts/verify.ps1` reuses the existing sandbox image. Integration tests remove
+their containers and unload the test model between checks. Both a failed run
+under memory pressure and the subsequent passing run left zero containers and
+zero loaded Ollama models. Unit tests passed 61 tests; all three real integrations
+passed after memory became available again.

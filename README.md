@@ -164,11 +164,15 @@ npm run lint
 npm run build
 ```
 
-Real sandbox/inference checks are opt-in and cannot pass without Docker and Ollama:
+The repeatable Windows verification command runs unit tests and real Docker/Ollama
+checks against the existing `agent-utopia-world:1` image. It does not build or tag
+another image. Each real check removes its sandbox container and unloads the test
+model when it finishes, including failures:
 
 ```powershell
-$env:UTOPIA_INTEGRATION = '1'
-.\.venv\Scripts\python.exe -m pytest -m integration -v
+.\scripts\verify.ps1
+# Run only the real checks:
+.\scripts\verify.ps1 -Suite Integration
 ```
 
 See [verification evidence](docs/evidence.md) for the checked requirements and
