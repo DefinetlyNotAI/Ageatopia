@@ -36,6 +36,6 @@ cold/warm measurements and separate hardware limits from implemented improvement
 Commit simulation, desktop controls and observatory changes as coherent themes.
 Do not push. Record unverified training/hardware paths explicitly.
 
-GPU adapter training and continuation are verified. Full live acceptance, held-out
-adapter quality and bounded inference host-cache configuration remain unresolved;
+GPU adapter training, continuation and bounded inference host-cache configuration
+are verified. Full live acceptance and held-out adapter quality remain unresolved;
 see desktop-evidence.md. The overall goal is not marked complete.

@@ -9,7 +9,8 @@ Agent code executes **only inside Docker**. No host shell fallback exists.
 ## Windows setup
 
 Install Python 3.12 or later, Node.js 22 or later, Docker Desktop with Linux
-containers, and Ollama. Start Docker and Ollama before starting a world.
+containers, and Ollama. Start Docker before starting a world. The desktop launcher
+starts local Ollama when no server is already listening.
 The default is six agents sharing Qwen3.5:2B and one inference worker.
 
 ```powershell
@@ -32,7 +33,7 @@ environment; use **Install dependencies**, **Build dashboard**, **Build sandbox 
 .\maintain.ps1
 ```
 
-Launch the desktop application, which starts and manages both local services:
+Launch the desktop application, which starts and manages its local services:
 
 ```powershell
 .\run.ps1
@@ -40,7 +41,8 @@ Launch the desktop application, which starts and manages both local services:
 
 Closing the standalone desktop window gracefully pauses simulations, persists state,
 removes owned Docker environments, and shuts down its servers. Existing servers on
-the configured ports cause a visible error; the launcher never takes ownership of them.
+the configured backend/dashboard ports cause a visible error. An existing Ollama
+server is reused without changing its settings or taking ownership of it.
 The Windows WebView2 runtime is required. Building the C host requires Visual Studio
 Build Tools with the C compiler and Windows SDK; `native/build.ps1` retrieves the
 pinned Microsoft WebView2 SDK from NuGet. Desktop services bind only to loopback.
@@ -56,6 +58,14 @@ controls simulation lifecycle, shows status and structured logs, and confirms er
 Desktop ports and the data directory are configured in `.data/desktop.json`; all three
 interfaces accept `--config PATH`. World settings remain strict configuration JSON.
 Logs are written under the configured data directory's `logs` folder.
+
+Desktop configuration also accepts `manage_ollama` (default `true`) and
+`ollama_cache_ram_mb` (default `1024`, range `0`–`16384`). The cache budget bounds
+the runner's host prompt cache through a process-local `LLAMA_ARG_CACHE_RAM` setting;
+it does not unload resident model weights or change global environment variables.
+Zero disables this cache. It applies only when the launcher starts its own Ollama
+server. Set `manage_ollama` to `false` when using an independently managed provider.
+Closing the standalone desktop unloads models and stops the Ollama server it owns.
 
 For development, the backend can still run separately:
 

@@ -79,7 +79,7 @@ class ControlApp(App):
     TITLE = "Agent Utopia · Control Room"
     CSS = """
     Screen { layout: vertical; }
-    #service-status { height: 3; padding: 1 2; color: $text-muted; }
+    #service-status { width: 1fr; height: 3; padding: 0 2; color: $text-muted; }
     #service-bar { height: 3; }
     #service-progress { width: 4; height: 1; }
     #main { height: 1fr; }
@@ -138,6 +138,8 @@ class ControlApp(App):
                             "data_dir": self.config["data_dir"],
                             "backend_port": self.config["backend_port"],
                             "dashboard_port": self.config["dashboard_port"],
+                            "manage_ollama": self.config["manage_ollama"],
+                            "ollama_cache_ram_mb": self.config["ollama_cache_ram_mb"],
                         },
                         indent=2,
                     ),
@@ -355,7 +357,16 @@ class ControlApp(App):
         try:
             values = json.loads(self.query_one("#app-config", TextArea).text)
             updated = validate_config(values, self.config_path)
-            saved = {key: updated[key] for key in ("data_dir", "backend_port", "dashboard_port")}
+            saved = {
+                key: updated[key]
+                for key in (
+                    "data_dir",
+                    "backend_port",
+                    "dashboard_port",
+                    "manage_ollama",
+                    "ollama_cache_ram_mb",
+                )
+            }
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.config_path.with_suffix(self.config_path.suffix + ".tmp")
             temporary.write_text(json.dumps(saved, indent=2) + "\n", encoding="utf-8")

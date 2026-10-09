@@ -100,10 +100,11 @@ applied to the different Qwen3.5 base used by the default inference model.
 
 ## Verification ledger
 
-- Python suite: 81 passed, three real-provider tests skipped in the standard run.
+- Python suite: 89 passed, three real-provider tests skipped in the standard run.
   This includes task-request guidance and adding the event lookup index to an
   existing database without losing its world, resource-error reporting and early
-  adapter validation. Ruff passed. The remaining FastAPI
+  adapter validation, model-server ownership, cache configuration and TUI configuration
+  persistence. Ruff check and formatting passed. The remaining FastAPI
   TestClient warning comes from its current httpx compatibility layer.
 - Dashboard: lint and production build passed. Rendered inspection covered desktop
   and 390-pixel layouts, agent reports and notebook content, link navigation, live
@@ -113,7 +114,9 @@ applied to the different Qwen3.5 base used by the default inference model.
 - Native: MSVC x64 `/TC /W4` compiled without warnings. The actual Win32 window
   rendered the observatory with native menus and status. A COM callback ownership
   defect discovered during launch was fixed. Normal close stopped both owned
-  services; the verified follow-up shutdown logged a graceful backend exit.
+  services; the verified follow-up shutdown logged a graceful backend exit. The
+  updated launcher also started its own Ollama server. Closing the actual native
+  window stopped all three services, released their ports and exited successfully.
 - TUIs: Textual pilots verified controls at 120 by 40, 80 by 40 and 80 by 24,
   editable configuration, exact-ID deletion confirmation, progress widgets and
   bounded logging. Narrow control panes scroll, all actions remain keyboard
@@ -154,7 +157,7 @@ Improvement in held-out simulation tasks and adapter activation remain unverifie
 Memory-based adaptation changes no model weights. The overall goal remains active
 pending acceptance work.
 
-## Remaining host-cache work
+## Bounded host-cache verification
 
 The live runner log recorded 19 cached prompts totaling 6,086.672 MiB against an
 8,192 MiB host-cache limit. Runner committed memory grew with repeated prompt
@@ -162,6 +165,21 @@ switches. This matches the mechanism in the
 [upstream Ollama report](https://github.com/ollama/ollama/issues/18264) and the
 [llama.cpp host-cache option](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md).
 The documented runner environment variable `LLAMA_ARG_CACHE_RAM` can bound this
-cache separately from keeping model weights resident. Applying and validating a
-smaller limit through the operator tooling remains work in progress; the prompt
-batch setting alone is not claimed to solve host-cache pressure.
+cache separately from keeping model weights resident. The desktop supervisor now
+starts local Ollama when absent, setting a configurable process-local 1,024 MiB
+budget. An existing server is identified as external and is never adopted, changed
+or stopped. The control room saves this setting, and maintenance reports the budget.
+
+The preserved `.data/acceptance-default-cache1024` six-agent run completed its full
+five-minute observation with two verified tasks, 211 completed inferences, 12 notebook
+writes and seven expressed states. Its runner log showed cache eviction and a peak
+recorded cache state of 1,011.338 MiB. No warning or error events were recorded.
+Four original agents performed successful workspace commands; two did not, so the
+existing acceptance gate still failed. The owned server shut down after the run.
+The four-service status panel also fits the 80-by-24 control room.
+
+A separate 4B attempt under the same cache budget failed during preload with CUDA
+shared-object initialization error, before simulation started. A subsequent default
+2B preload succeeded in 5,353 ms. The cache cap is verified for the default model;
+this does not establish that all larger model allocations fit or resolve that 4B
+startup failure. Full live acceptance and held-out adapter quality remain open.

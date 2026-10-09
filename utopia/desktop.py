@@ -24,7 +24,13 @@ def load_config(path=DEFAULT_CONFIG):
 
 
 def default_config():
-    return {"data_dir": str(ROOT / ".data"), "backend_port": 8000, "dashboard_port": 3000}
+    return {
+        "data_dir": str(ROOT / ".data"),
+        "backend_port": 8000,
+        "dashboard_port": 3000,
+        "manage_ollama": True,
+        "ollama_cache_ram_mb": 1024,
+    }
 
 
 def validate_config(values, path=DEFAULT_CONFIG):
@@ -37,6 +43,13 @@ def validate_config(values, path=DEFAULT_CONFIG):
             raise ValueError(f"{key} must be an integer between 1024 and 65535")
     if config["backend_port"] == config["dashboard_port"]:
         raise ValueError("backend_port and dashboard_port must be different")
+    if not isinstance(config["manage_ollama"], bool):
+        raise ValueError("manage_ollama must be true or false")
+    cache = config["ollama_cache_ram_mb"]
+    if isinstance(cache, bool) or not isinstance(cache, int) or not 0 <= cache <= 16384:
+        raise ValueError("ollama_cache_ram_mb must be an integer between 0 and 16384")
+    if config["manage_ollama"] and 11434 in (config["backend_port"], config["dashboard_port"]):
+        raise ValueError("Application ports must not conflict with local Ollama port 11434")
     config["data_dir"] = str(Path(config["data_dir"]).expanduser().resolve())
     config["config_path"] = str(Path(path).expanduser().resolve())
     return config
@@ -84,6 +97,7 @@ class ProcessSupervisor:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.logger = setup_logging(self.data_dir, "desktop")
         self.processes = {}
+        self.external_ollama = False
 
     @staticmethod
     def _assert_port_available(port):
@@ -96,8 +110,8 @@ class ProcessSupervisor:
                 raise RuntimeError(f"127.0.0.1:{port} is already in use") from error
 
     def _spawn(self, name, command, cwd, env):
-        port_key = "backend_port" if name == "backend" else "dashboard_port"
-        self._assert_port_available(self.config[port_key])
+        port = 11434 if name == "ollama" else self.config[f"{name}_port"]
+        self._assert_port_available(port)
         log_file = open(self.data_dir / "logs" / f"{name}.log", "ab", buffering=0)
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
@@ -117,6 +131,41 @@ class ProcessSupervisor:
         self.logger.info(json.dumps({"action": "started", "service": name, "pid": process.pid}))
         return process
 
+    def start_ollama(self):
+        if "ollama" in self.processes and self.processes["ollama"][0].poll() is None:
+            return
+        try:
+            response = httpx.get("http://127.0.0.1:11434/api/tags", timeout=2, trust_env=False)
+            response.raise_for_status()
+        except httpx.HTTPError:
+            pass
+        else:
+            self.external_ollama = True
+            self.logger.info("Existing Ollama server retained; its cache settings are unchanged")
+            return
+        executable = shutil_which("ollama")
+        if not executable:
+            raise RuntimeError("Install Ollama or set manage_ollama=false for an external provider")
+        env = os.environ.copy()
+        env["OLLAMA_HOST"] = "127.0.0.1:11434"
+        env["LLAMA_ARG_CACHE_RAM"] = str(self.config["ollama_cache_ram_mb"])
+        self.external_ollama = False
+        process = self._spawn("ollama", [executable, "serve"], ROOT, env)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError("Ollama exited before becoming ready; inspect logs/ollama.log")
+            try:
+                response = httpx.get("http://127.0.0.1:11434/api/tags", timeout=2, trust_env=False)
+                response.raise_for_status()
+                self.logger.info(
+                    f"Managed Ollama ready with {self.config['ollama_cache_ram_mb']} MiB host cache"
+                )
+                return
+            except httpx.HTTPError:
+                time.sleep(0.25)
+        raise TimeoutError("Ollama did not become ready within 30 seconds")
+
     def start_services(self):
         if all(
             name in self.processes and self.processes[name][0].poll() is None
@@ -134,6 +183,8 @@ class ProcessSupervisor:
         env["UTOPIA_DATA"] = str(self.data_dir)
         env["UTOPIA_API_URL"] = f"http://127.0.0.1:{self.config['backend_port']}"
         try:
+            if self.config["manage_ollama"]:
+                self.start_ollama()
             self._spawn(
                 "backend",
                 [sys.executable, "-m", "utopia.cli", "--port", str(self.config["backend_port"])],
@@ -187,13 +238,35 @@ class ProcessSupervisor:
         raise TimeoutError("Application services did not become ready within 90 seconds")
 
     def stop_services(self):
-        for name in ("window", "dashboard", "backend"):
+        for name in ("window", "dashboard", "backend", "ollama"):
             entry = self.processes.pop(name, None)
             if not entry:
                 continue
             process, log_file = entry
             if process.poll() is None:
                 try:
+                    if name == "ollama":
+                        try:
+                            with httpx.Client(timeout=10, trust_env=False) as client:
+                                response = client.get("http://127.0.0.1:11434/api/ps")
+                                response.raise_for_status()
+                                models = {m["name"] for m in response.json().get("models", [])}
+                                for model in models:
+                                    response = client.post(
+                                        "http://127.0.0.1:11434/api/generate",
+                                        json={"model": model, "keep_alive": 0},
+                                    )
+                                    response.raise_for_status()
+                        except (httpx.HTTPError, ValueError, KeyError) as error:
+                            self.logger.warning(f"Ollama model release failed: {error}")
+                        if os.name == "nt" and process.poll() is None:
+                            subprocess.run(
+                                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                capture_output=True,
+                                timeout=8,
+                                check=False,
+                                creationflags=subprocess.CREATE_NO_WINDOW,
+                            )
                     if name == "backend":
                         try:
                             OperatorApi(self.config).request("POST", "/shutdown")
@@ -221,10 +294,13 @@ class ProcessSupervisor:
             self.logger.info(json.dumps({"action": "stopped", "service": name}))
 
     def status(self):
-        return {
+        statuses = {
             name: "running" if process.poll() is None else f"exited ({process.returncode})"
             for name, (process, _) in self.processes.items()
         }
+        if self.external_ollama:
+            statuses["ollama"] = "external (not managed)"
+        return statuses
 
     def launch_window(self):
         if "window" in self.processes and self.processes["window"][0].poll() is None:

@@ -196,6 +196,10 @@ class MaintenanceApp(App):
         outcomes.append(
             f"Native host: {'built' if executable.is_file() else 'missing; use Build native host'}"
         )
+        outcomes.append(
+            f"Ollama host-cache budget: {self.config['ollama_cache_ram_mb']} MiB "
+            "(applies when the application starts its own server)"
+        )
         for label, command in (("Docker", ["docker", "info"]), ("NVIDIA GPU", ["nvidia-smi"])):
             path = shutil.which(command[0])
             if not path:
