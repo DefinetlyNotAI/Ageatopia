@@ -130,6 +130,29 @@ async def test_inspecting_without_a_task_explains_how_to_request_work(engine):
     assert engine.agent(identity)["state"] != "TERMINATED"
 
 
+async def test_relaxing_agent_can_journal_and_speak_without_being_forced_back_to_work(engine):
+    identity = next(iter(engine.state["agents"]))
+    enter = call("enter")
+    enter["tool_calls"][0]["function"]["name"] = "relax"
+    journal = call("write")
+    journal["tool_calls"][0]["function"] = {
+        "name": "memory",
+        "arguments": {"operation": "write", "text": "I explored my surroundings."},
+    }
+    runtime, provider = runtime_with(
+        engine, [enter, journal, {"role": "assistant", "content": "I am enjoying a quiet moment."}]
+    )
+    await runtime.agent_loop(identity)
+    assert engine.agent(identity)["state"] == "RELAX"
+    assert engine.agent(identity)["task_id"] is None
+    assert "I explored my surroundings." in engine.agent(identity)["memory"]
+    assert "You chose to relax" in provider.histories[-1][-1]["content"]
+    assert engine.agent(identity)["history"][-1]["role"] == "assistant"
+    assert (await runtime.tools.execute(identity, "relax", {"operation": "resume"}))[
+        "state"
+    ] == "ACTIVE"
+
+
 async def test_shared_inference_serializes_six_independent_histories(engine):
     runtime, provider = runtime_with(engine, [{"role": "assistant", "content": "Done"}] * 6)
     await asyncio.gather(*(runtime.agent_loop(identity) for identity in engine.state["agents"]))

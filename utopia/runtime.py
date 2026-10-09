@@ -487,7 +487,21 @@ class Runtime:
                         "\nRelevant excerpts from your own notebook and experience:\n"
                         + "\n".join(notes)
                     )
-                if state_note:
+                correct_tasks = sum(t["result"] == "correct" for t in agent["task_history"])
+                state_note += (
+                    f"\nYou have solved {correct_tasks} tasks correctly. "
+                    f"Your next five-minute bonus is after {3 - correct_tasks % 3} "
+                    "more correct tasks."
+                )
+                if agent["state"] == "RELAX":
+                    state_note += (
+                        "\nYou chose to relax. Choose your own activity: journal, reflect, "
+                        "explore your environment, or return to work when you wish. "
+                        "Your lifetime still counts down."
+                    )
+                    if task:
+                        state_note += f" Your task {task['id']} remains assigned."
+                elif state_note:
                     state_note += (
                         f"\nYour current task is {task['id']}. Continue solving it with the tools."
                         if task
@@ -514,10 +528,11 @@ class Runtime:
                     raise ValueError("Provider returned an empty response")
                 engine.conversation(identity, result.message)
                 if not calls:
+                    relaxing = agent["state"] == "RELAX"
                     work_remains = agent["task_id"] or any(
                         task["status"] == "AVAILABLE" for task in engine.state["tasks"]
                     )
-                    if work_remains:
+                    if work_remains and not relaxing:
                         engine.conversation(
                             identity,
                             {
@@ -529,13 +544,19 @@ class Runtime:
                             },
                         )
                     with engine.transaction():
-                        agent["state"] = "ACTIVE" if work_remains else "IDLE"
+                        agent["state"] = (
+                            "RELAX" if relaxing else "ACTIVE" if work_remains else "IDLE"
+                        )
                         agent["retry_after_ms"] = engine.state["sim_ms"] + 5000
                         engine.emit(
                             "agent.state",
                             {
                                 "state": agent["state"],
-                                "reason": "continue remaining work" if work_remains else "no work",
+                                "reason": "intentional downtime"
+                                if relaxing
+                                else "continue remaining work"
+                                if work_remains
+                                else "no work",
                             },
                             identity,
                         )

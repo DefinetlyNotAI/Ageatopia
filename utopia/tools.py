@@ -68,7 +68,21 @@ TOOLS = [
         },
         ["operation"],
     ),
-    function("lifetime", "Read your remaining working time.", {}, []),
+    function(
+        "lifetime",
+        "Read remaining lifetime and progress toward the five-minute bonus "
+        "earned every three correctly solved tasks.",
+        {},
+        [],
+    ),
+    function(
+        "relax",
+        "Choose intentional downtime with operation=enter. You can journal, reflect, explore "
+        "or use any tools while relaxing; lifetime still counts down and your task stays assigned. "
+        "Use operation=resume or request a task to return to work.",
+        {"operation": {"type": "string", "enum": ["enter", "resume"]}},
+        ["operation"],
+    ),
     function(
         "memory",
         "Write observations and lessons to your personal notebook, read recent entries, "
@@ -148,7 +162,13 @@ class ToolExecutor:
                     return engine.submit(identity, args.get("answer"), self.sandbox.available)
             raise ValueError("Task operation must be request, inspect, skip or submit")
         if name == "lifetime":
-            return {"remaining_ms": engine.personal_state(identity)["remaining_ms"]}
+            state = engine.personal_state(identity)
+            return {
+                key: state[key]
+                for key in ("remaining_ms", "state", "correct_tasks", "tasks_until_bonus")
+            }
+        if name == "relax":
+            return engine.relax(identity, args["operation"])
         if name == "rename":
             return engine.rename(identity, args["name"])
         if name == "reflect":

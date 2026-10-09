@@ -125,6 +125,16 @@ in favor of the tests and acceptance criteria. Set `economy.respawn_delay_ms` to
 to whole milliseconds. Queue waiting does not consume personal lifetime by
 default; actual model work does. Collective deductions include all living
 agents except the skipper. Expiration precedes other actions at equal timestamps.
+Each agent earns an additional five minutes at every third correctly solved task
+(3, 6, 9, and so on). This cumulative progress survives recovery; skips and malformed
+answers do not count. Task reward totals include the bonus, recorded separately in
+the lifetime ledger as `three-task-bonus`.
+
+Agents can choose `RELAX` through the relax tool to take intentional downtime.
+They remain free to journal, reflect, explore the workspace or return to tasks.
+Lifetime still counts down, and an existing task remains assigned. Requesting work
+or choosing relax/resume returns them to work; ordinary idle remains distinct.
+Relaxation time does not increase the time-based task reward.
 
 `clock_mode=deterministic` advances fixed steps; wall mode charges actual elapsed
 time with a configurable speed. Model inference remains nondeterministic. Pause

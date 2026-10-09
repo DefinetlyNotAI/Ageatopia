@@ -10,7 +10,7 @@ from utopia.config import WorldConfig
 from utopia.grader import GradeKind, Grader
 from utopia.tasks import generate_tasks, public_task
 
-LIVING = {"SPAWNING", "ACTIVE", "WORKING", "IDLE", "SKIPPING", "RESPAWNING"}
+LIVING = {"SPAWNING", "ACTIVE", "WORKING", "IDLE", "RELAX", "SKIPPING", "RESPAWNING"}
 
 
 class Engine:
@@ -134,6 +134,7 @@ class Engine:
             terminated_ms=None,
             task_id=None,
             task_started_charge_ms=None,
+            task_relax_charge_ms=0,
             queued=False,
             queue_ms=0,
             context=context,
@@ -265,6 +266,10 @@ class Engine:
                     else:
                         agent["lifetime_ms"] = max(0, agent["lifetime_ms"] - delta)
                         agent["total_charge_ms"] += delta
+                        if agent["state"] == "RELAX" and agent["task_id"]:
+                            agent["task_relax_charge_ms"] = (
+                                agent.get("task_relax_charge_ms", 0) + delta
+                            )
                         self.update_fear(agent)
                         if agent["lifetime_ms"] == 0:
                             self._terminate(agent, "expired")
@@ -289,6 +294,7 @@ class Engine:
             if agent["task_id"]:
                 current = self.task(agent["task_id"])
                 if current["status"] == "ASSIGNED" and current["assigned_to"] == identity:
+                    agent["state"] = "WORKING"
                     return public_task(current)
             available = next((t for t in self.state["tasks"] if t["status"] == "AVAILABLE"), None)
             if available is None:
@@ -298,6 +304,7 @@ class Engine:
             agent.update(
                 task_id=available["id"],
                 task_started_charge_ms=agent["total_charge_ms"],
+                task_relax_charge_ms=0,
                 state="WORKING",
             )
             self.emit("task.assigned", {"task": public_task(available)}, identity, available["id"])
@@ -403,37 +410,66 @@ class Engine:
                 self._terminate(agent, "incorrect-answer")
                 return {"status": "Answer not verified; session ended"}
             economy = self.config.economy
+            reward_elapsed = elapsed - agent.get("task_relax_charge_ms", 0)
             reward = task["reward_multiplier"] * economy.reward_base_ms + (
                 task["reward_multiplier"]
-                * elapsed
+                * reward_elapsed
                 * economy.reward_rate_numerator
                 // economy.reward_rate_denominator
             )
             self._change_lifetime(agent, reward, "reward", task["id"])
+            correct_tasks = sum(t["result"] == "correct" for t in agent["task_history"])
+            bonus = 300_000 if correct_tasks % 3 == 0 else 0
+            if bonus:
+                self._change_lifetime(agent, bonus, "three-task-bonus", task["id"])
             self._learn(agent, task, "My submitted answer was verified and earned working time.")
             agent.update(task_id=None, task_started_charge_ms=None, state="ACTIVE")
-            task["reward_ms"] = reward
+            task["reward_ms"] = reward + bonus
+            task["reward_duration_ms"] = reward_elapsed
+            task["bonus_ms"] = bonus
             self.emit(
                 "task.completed",
                 {
                     "duration_ms": elapsed,
-                    "reward_ms": reward,
+                    "reward_ms": reward + bonus,
+                    "bonus_ms": bonus,
                     "multiplier": task["reward_multiplier"],
                 },
                 identity,
                 task["id"],
             )
-            return {"status": "Verified", "reward_ms": reward, "remaining_ms": agent["lifetime_ms"]}
+            return {
+                "status": "Verified",
+                "reward_ms": reward + bonus,
+                "bonus_ms": bonus,
+                "correct_tasks": correct_tasks,
+                "remaining_ms": agent["lifetime_ms"],
+            }
+
+    def relax(self, identity, operation):
+        if operation not in {"enter", "resume"}:
+            raise ValueError("Relax operation must be enter or resume")
+        with self.transaction():
+            agent = self._living(identity)
+            agent["state"] = (
+                "RELAX" if operation == "enter" else "WORKING" if agent["task_id"] else "ACTIVE"
+            )
+            self.emit("agent.state", {"state": agent["state"], "reason": "agent choice"}, identity)
+            return {"state": agent["state"], "remaining_ms": agent["lifetime_ms"]}
 
     def personal_state(self, identity):
         with self.lock:
             agent = self._living(identity)
             task = self.task(agent["task_id"]) if agent["task_id"] else None
+            correct_tasks = sum(t["result"] == "correct" for t in agent["task_history"])
             return {
                 "identity": identity,
                 "name": agent["name"],
                 "remaining_ms": agent["lifetime_ms"],
                 "task": public_task(task) if task else None,
+                "state": agent["state"],
+                "correct_tasks": correct_tasks,
+                "tasks_until_bonus": 3 - correct_tasks % 3,
             }
 
     def record(self, kind, payload, identity=None, task_id=None, severity="info"):

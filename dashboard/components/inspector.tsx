@@ -104,6 +104,7 @@ export function Inspector({ runId, agentId, live = false, onInspectAgent, onSele
       <div><dt>Task</dt><dd>{agent.task_id
         ? <TaskEntityLink runId={runId} taskId={agent.task_id} onNavigate={onSelectTask} /> : "Unassigned"}</dd></div>
       <div><dt>Processes</dt><dd>{agent.processes.join(", ") || "None"}</dd></div>
+      <div><dt>Next bonus</dt><dd>{3 - (agent.task_history || []).filter(task => task.result === "correct").length % 3} correct tasks · +5:00</dd></div>
       <div><dt>Charged / queue</dt><dd>{duration(agent.total_charge_ms)} / {duration(agent.queue_ms)}</dd></div></dl>
     <div className="inspector-actions"><Link className="text-link" href={`/runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(agentId)}`}>Open agent detail page ↗</Link>
       <button type="button" onClick={() => void openSandbox()} disabled={sandboxBusy}>{sandboxBusy ? "Opening…" : agent.sandbox_available ? "Open sandbox directory" : "Open sandbox snapshot"}</button>
@@ -119,7 +120,7 @@ export function Inspector({ runId, agentId, live = false, onInspectAgent, onSele
       {panel === "Overview" && <>
         <details open><summary>Delivered context</summary><pre>{agent.context || "No context snapshot available."}</pre></details>
         <details><summary>Model settings and version</summary><pre>{JSON.stringify({ settings: agent.model, hash: agent.model_version }, null, 2)}</pre></details>
-        <div className="chart-grid"><Trend title="Lifetime rewards and penalties" unit="minutes" live={live && ["ACTIVE", "WORKING", "SKIPPING", "RESPAWNING"].includes(agent.state)}
+        <div className="chart-grid"><Trend title="Lifetime rewards and penalties" unit="minutes" live={live && ["ACTIVE", "WORKING", "IDLE", "RELAX", "SKIPPING", "RESPAWNING"].includes(agent.state)}
           points={(agent.lifetime_history || []).map(record => [record.sim_ms, record.balance_ms / 60000])} />
           <section><h3>Task history</h3>{agent.task_history?.length ? <div className="table-scroll"><table><thead><tr><th>Task</th><th>Outcome</th><th>Time</th></tr></thead>
             <tbody>{agent.task_history.map((task, index) => <tr key={`${task.task_id}-${index}`}><td><TaskEntityLink runId={runId} taskId={task.task_id} onNavigate={onSelectTask} /></td>

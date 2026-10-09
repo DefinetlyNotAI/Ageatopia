@@ -50,6 +50,71 @@ def test_submillisecond_reward_rounding_occurs_once(engine):
     assert engine.submit(identity, task["answer"])["reward_ms"] == 120001
 
 
+def test_every_three_correct_tasks_awards_five_minutes_across_recovery(engine):
+    identity = first(engine)
+    initial = engine.agent(identity)["lifetime_ms"]
+    for count in range(1, 7):
+        if count == 3:
+            engine = Engine(engine.store, engine.store.load(engine.state["id"]))
+            engine.recover()
+            engine.control("resume")
+        _, task = assigned(engine, identity)
+        result = engine.submit(identity, task["answer"])
+        assert result["bonus_ms"] == (300_000 if count % 3 == 0 else 0)
+        assert result["reward_ms"] == 60_000 + result["bonus_ms"]
+    assert engine.agent(identity)["lifetime_ms"] == initial + 6 * 60_000 + 600_000
+    assert engine.personal_state(identity)["correct_tasks"] == 6
+    assert engine.personal_state(identity)["tasks_until_bonus"] == 3
+    bonuses = [
+        r for r in engine.agent(identity)["lifetime_history"] if r["reason"] == "three-task-bonus"
+    ]
+    assert len(bonuses) == 2
+    assert engine.submit(identity, "1")["error"] == "No current task"
+    assert (
+        len(
+            [
+                r
+                for r in engine.agent(identity)["lifetime_history"]
+                if r["reason"] == "three-task-bonus"
+            ]
+        )
+        == 2
+    )
+
+
+def test_relax_preserves_task_notebook_and_lifetime_charging(engine):
+    identity, task = assigned(engine)
+    assert engine.relax(identity, "enter")["state"] == "RELAX"
+    engine.save_memory(identity, "I am taking time to explore.")
+    engine.tick(1000)
+    assert engine.agent(identity)["state"] == "RELAX"
+    assert engine.agent(identity)["lifetime_ms"] == 1_199_000
+    assert engine.agent(identity)["task_id"] == task["id"]
+    restored = Engine(engine.store, engine.store.load(engine.state["id"]))
+    restored.recover()
+    assert restored.agent(identity)["state"] == "RELAX"
+    assert restored.relax(identity, "resume")["state"] == "WORKING"
+
+
+def test_relax_time_is_charged_but_does_not_increase_task_reward(engine):
+    identity, _ = assigned(engine)
+    engine.skip(identity)
+    _, task = assigned(engine, identity)
+    initial = engine.agent(identity)["lifetime_ms"]
+    engine.relax(identity, "enter")
+    engine.tick(90_000)
+    restored = Engine(engine.store, engine.store.load(engine.state["id"]))
+    restored.recover()
+    restored.control("resume")
+    restored.relax(identity, "resume")
+    restored.tick(3000)
+    result = restored.submit(identity, task["answer"])
+    assert result["reward_ms"] == 124_000
+    assert result["remaining_ms"] == initial - 93_000 + 124_000
+    assert restored.task(task["id"])["duration_ms"] == 93_000
+    assert restored.task(task["id"])["reward_duration_ms"] == 3000
+
+
 def test_skip_individual_collective_and_task_pool(engine):
     identity, task = assigned(engine)
     engine.skip(identity)

@@ -323,3 +323,27 @@ Correct context reconstruction and successful weight training do not demonstrate
 improved agent performance. Standard verification passed 96 tests with three
 real-provider tests skipped; Ruff check/format passed. Full acceptance and learning
 quality remain unresolved.
+
+## Voluntary relaxation and recurring success bonus
+
+Agents can choose `RELAX` with the relax tool and continue using memory, reflection
+and workspace tools. Text-only replies preserve the state without a forced return
+to task work. The runtime schedules relaxing agents even without available tasks.
+Lifetime still counts down and assigned work remains reserved. Resume or requesting
+work restores the working state; relaxation and its task-time accounting survive recovery.
+Relaxation is excluded from reward-eligible elapsed time, preventing multiplied
+task rewards from turning deliberate downtime into lifetime gains.
+
+Every third cumulative correct task awards an additional 300,000 ms at 3, 6, 9,
+and so on. Durable task history determines progress; no mutable counter is reset
+by application restart. The lifetime ledger records `three-task-bonus` separately,
+and task reward totals include it. Agent context, the lifetime tool and inspector
+show progress toward the next bonus.
+
+Verification passed 100 standard tests with three real-provider tests skipped,
+including bonuses at three and six successes across recovery, relaxation charging,
+journaling and text replies, and exclusion of downtime from doubled task rewards.
+Ruff, dashboard typecheck/lint and production build passed. The actual C/Win32
+window rendered a labeled operator fixture showing `RELAX`, three correct tasks,
+28:00 remaining and the next +5:00 bonus. This fixture checks rendering and engine
+transitions; it does not claim autonomous live-model adoption or full acceptance.
