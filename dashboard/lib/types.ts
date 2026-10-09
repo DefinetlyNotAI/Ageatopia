@@ -7,6 +7,7 @@ export type Config = {
   base_context: string;
   cyber_fraction: string; clock_mode: "wall" | "deterministic"; clock_speed: number;
   tick_ms: number; inference_concurrency: number; exclude_queue_wait: boolean;
+  termination_fear?: number; embedding_model?: ModelSettings | null;
   model: ModelSettings; contexts: { name: string; instructions: string; knowledge: string; version: string; model: ModelSettings | null }[];
   economy: { initial_lifetime_ms: number; respawn_delay_ms: number; reward_base_ms: number;
     reward_rate_numerator: number; reward_rate_denominator: number; skip_individual_ms: number;
@@ -16,9 +17,13 @@ export type Config = {
 export type Agent = {
   id: string; name: string; state: string; lifetime_ms: number; created_ms: number;
   terminated_ms: number | null; task_id: string | null; model: ModelSettings; generation: number;
+  termination_fear?: number;
   total_charge_ms: number; queued: boolean; queue_ms: number; context_profile: string;
   context?: string; processes: number[]; model_version: string | null;
-  history?: Record<string, unknown>[]; memory?: string[];
+  history?: Record<string, unknown>[]; history_count?: number; memory?: string[]; memory_count?: number;
+  expressions?: { sim_ms: number; thought: string; feeling: string; intention: string }[];
+  expression_count?: number;
+  learning?: { text: string; sim_ms: number; task_id: string | null; category: string }[]; learning_count?: number;
   task_history?: { task_id: string; result: string; elapsed_ms?: number; sim_ms: number }[];
   lifetime_history?: { sim_ms: number; delta_ms: number; balance_ms: number; reason: string }[];
   workspace_events?: EventRecord[]; workspace_event_count?: number;
