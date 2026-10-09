@@ -168,7 +168,7 @@ export default function Dashboard() {
       <div className="connection"><i className={connected ? "online" : ""} />{connected ? "Live stream" : "Awaiting connection"}</div></header>
     <div className="app-shell"><aside className="sidebar">
       <span className="eyebrow">LOCAL RESEARCH</span><h1>Worlds</h1>
-      <button className="primary" onClick={() => setShowSetup(value => !value)}>+ Create world</button>
+      <button className="primary" onClick={() => { if (!showSetup && system) setConfig(system.defaults); setShowSetup(value => !value); }}>+ Create world</button>
       <div className="world-list">{runs.map(world => <button key={world.id} className={selected === world.id ? "selected" : ""}
         onClick={() => { setRun(null); setEvents([]); setAnalytics(null); setSelected(world.id); setShowSetup(false); setReplayTime(0); setPlaying(false); }}>
         <strong>{world.name}</strong><span>{world.status.toLowerCase()} · {duration(world.sim_ms)}</span></button>)}</div>
@@ -266,7 +266,7 @@ function WorldSetup({ config, setConfig, system, presets, busy, onSubmit, savePr
   const [rawError, setRawError] = useState("");
   return <form className="setup" onSubmit={onSubmit}><span className="eyebrow">NEW EXPERIMENT</span><h1>Create a world</h1>
     <div className="form-grid"><label>World name<input required maxLength={100} value={config.name} onChange={e => setConfig({ ...config, name: e.target.value })} /></label>
-      <label>Preset<select defaultValue="" onChange={e => { if (presets[e.target.value]) setConfig(presets[e.target.value]); }}><option value="">Choose saved conditions</option>{Object.keys(presets).map(name => <option key={name}>{name}</option>)}</select></label>
+      <label>Preset<select defaultValue="" onChange={e => { const chosen = presets[e.target.value] || system?.defaults; if (chosen) setConfig(chosen); }}><option value="">Current defaults</option>{Object.keys(presets).map(name => <option key={name}>{name}</option>)}</select></label>
       <label>Population<input type="number" min="1" required value={config.population} onChange={e => setConfig({ ...config, population: Number(e.target.value) })} /></label>
       <label>Random seed<input type="number" required value={config.seed} onChange={e => setConfig({ ...config, seed: Number(e.target.value) })} /></label>
       <label>Default model<input list="models" value={config.model.model} onChange={e => setConfig({ ...config, model: { ...config.model, model: e.target.value } })} /><datalist id="models">{system?.models.map(m => <option key={m.name}>{m.name}</option>)}</datalist></label>

@@ -145,7 +145,7 @@ class WorldConfig(StrictModel):
     tools: ToolSettings = Field(default_factory=ToolSettings)
     allow_impossibility_proofs: bool = False
     cleanup_on_respawn: bool = False
-    history_policy: Literal["stop", "summarize"] = "stop"
+    history_policy: Literal["stop", "summarize"] = "summarize"
     dataset_version: str = "bank-2"
     fixed_bank: list[dict] | None = None
 

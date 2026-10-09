@@ -110,10 +110,12 @@ The trusted observer reads numeric kernel events rather than tracee strings.
 Observer batches
 are acknowledged only after durable database commit, with deduplication on retry.
 
-An agent that stops requesting tools becomes idle without repeated model nudges.
+An agent that returns text without tool calls receives a continuation instruction
+and retries after five seconds while work remains. With no work it waits idle.
 The context guard reserves output/template capacity and uses a conservative UTF-8
-byte bound for Qwen tokenization. Capacity stops are visible. Optional summarization
-uses only observed history; if the full source cannot fit, it stops visibly instead
+byte bound for Qwen tokenization. New worlds summarize observed history by default,
+preserving the original messages in the event log. The explicit stop policy remains
+available; if the full summary source cannot fit, the agent stops visibly instead
 of silently truncating. Other model tokenizers may need a larger configured budget.
 GPU metrics come from `nvidia-smi`; missing measurements remain unavailable.
 Only one run can be active at a time so multiple worlds cannot bypass GPU concurrency.

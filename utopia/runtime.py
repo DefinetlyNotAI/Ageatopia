@@ -424,12 +424,30 @@ class Runtime:
                     raise ValueError("Provider returned an empty response")
                 engine.conversation(identity, result.message)
                 if not calls:
-                    # A model choosing to stop is idle; no fabricated action or repeated nudging.
+                    work_remains = agent["task_id"] or any(
+                        task["status"] == "AVAILABLE" for task in engine.state["tasks"]
+                    )
+                    if work_remains:
+                        engine.conversation(
+                            identity,
+                            {
+                                "role": "user",
+                                "content": "Continue working using the available tools. "
+                                "If you have no assigned task, call task with operation=request. "
+                                "Otherwise inspect, solve, submit or skip your assigned task. "
+                                "Do not wait for the operator to give you work.",
+                            },
+                        )
                     with engine.transaction():
-                        agent["state"] = "IDLE"
-                        agent["retry_after_ms"] = 2**62
+                        agent["state"] = "ACTIVE" if work_remains else "IDLE"
+                        agent["retry_after_ms"] = engine.state["sim_ms"] + 5000
                         engine.emit(
-                            "agent.state", {"state": "IDLE", "reason": "no tool calls"}, identity
+                            "agent.state",
+                            {
+                                "state": agent["state"],
+                                "reason": "continue remaining work" if work_remains else "no work",
+                            },
+                            identity,
                         )
                     return
                 with engine.transaction():

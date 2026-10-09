@@ -125,6 +125,20 @@ async def test_empty_model_response_is_retryable_and_does_not_enter_history(engi
     assert provider.active == 0 and provider.semaphore._value == 1
 
 
+async def test_text_only_reply_continues_when_tasks_remain(engine):
+    identity = next(iter(engine.state["agents"]))
+    runtime, provider = runtime_with(
+        engine, [{"role": "assistant", "content": "I am ready to assist."}]
+    )
+    await runtime.agent_loop(identity)
+    assert engine.agent(identity)["state"] == "ACTIVE"
+    assert engine.agent(identity)["retry_after_ms"] == engine.state["sim_ms"] + 5000
+    assert engine.agent(identity)["history"][-1]["role"] == "user"
+    assert "operation=request" in engine.agent(identity)["history"][-1]["content"]
+    assert not engine.store.event_page(engine.state["id"], kind="tool.invoked")
+    assert len(provider.histories) == 1
+
+
 async def test_cancelled_queue_wait_releases_waiting_flag(engine):
     identity = next(iter(engine.state["agents"]))
     runtime, provider = runtime_with(engine, [])
@@ -140,6 +154,7 @@ async def test_cancelled_queue_wait_releases_waiting_flag(engine):
 
 
 async def test_context_overflow_is_visible_without_silent_truncation(engine):
+    engine.config.history_policy = "stop"
     identity = next(iter(engine.state["agents"]))
     engine.conversation(identity, {"role": "user", "content": "x" * 10000})
     history = copy.deepcopy(engine.agent(identity)["history"])
@@ -150,6 +165,31 @@ async def test_context_overflow_is_visible_without_silent_truncation(engine):
     assert provider.histories == []
     with pytest.raises(ContextOverflow):
         SharedInference.context_bound(history, TOOLS, ModelSettings())
+
+
+async def test_default_context_policy_summarizes_and_continues(engine):
+    assert engine.config.history_policy == "summarize"
+    identity = next(iter(engine.state["agents"]))
+    while True:
+        try:
+            SharedInference.context_bound(engine.agent(identity)["history"], TOOLS, ModelSettings())
+        except ContextOverflow:
+            break
+        engine.conversation(identity, {"role": "user", "content": "Observed fact: " + "x" * 200})
+    history = copy.deepcopy(engine.agent(identity)["history"])
+    runtime, provider = runtime_with(
+        engine, [{"role": "assistant", "content": "Working notes: preserve the observed facts."}]
+    )
+    original_messages = engine.store.event_page(engine.state["id"], kind="agent.message")
+    assert await runtime.manage_context(identity)
+    assert engine.agent(identity)["state"] != "IDLE"
+    assert engine.agent(identity)["history"][0] == history[0]
+    assert len(engine.agent(identity)["history"]) == 2
+    assert "Working notes" in engine.agent(identity)["history"][1]["content"]
+    record = engine.store.event_page(engine.state["id"], kind="context.summarized")[-1]
+    assert record["payload"]["source_messages"] == len(history) - 1
+    assert engine.store.event_page(engine.state["id"], kind="agent.message") == original_messages
+    assert len(provider.histories) == 1
 
 
 async def test_docker_missing_never_executes_agent_code_on_host(monkeypatch):

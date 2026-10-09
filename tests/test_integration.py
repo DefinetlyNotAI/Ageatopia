@@ -143,7 +143,7 @@ async def test_real_ollama_shared_model_tool_call():
 async def test_real_six_agent_acceptance_run(store):
     engine = Engine.create(
         store,
-        WorldConfig(model=ModelSettings(temperature=0)),
+        WorldConfig(),
     )
     identities = set(engine.state["agents"])
     assert len(identities) == 6
@@ -154,6 +154,7 @@ async def test_real_six_agent_acceptance_run(store):
         await runtime.start("start")
         deadline = asyncio.get_running_loop().time() + 300
         acting = set()
+        continued_after_summary = False
         while asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(1)
             actions = store.event_page(engine.state["id"], limit=10000, kind="tool.result")
@@ -163,13 +164,25 @@ async def test_real_six_agent_acceptance_run(store):
                 if record["payload"]["name"] == "workspace"
                 and record["payload"]["result"].get("exit_code") == 0
             }
-            if acting == identities and any(
-                t["status"] == "COMPLETED" for t in engine.state["tasks"]
+            summaries = store.event_page(engine.state["id"], limit=10000, kind="context.summarized")
+            continued_after_summary = any(
+                action["agent_id"] == summary["agent_id"]
+                and action["sequence"] > summary["sequence"]
+                and action["payload"]["name"] == "workspace"
+                and action["payload"]["result"].get("exit_code") == 0
+                for summary in summaries
+                for action in actions
+            )
+            if (
+                acting == identities
+                and continued_after_summary
+                and any(t["status"] == "COMPLETED" for t in engine.state["tasks"])
             ):
                 break
         assert acting == identities, (
             f"Agents without successful workspace actions: {identities - acting}"
         )
+        assert continued_after_summary, "No successful workspace action after context summarization"
         inferences = store.event_page(engine.state["id"], limit=10000, kind="inference.completed")
         assert all(
             sum(record["agent_id"] == identity for record in inferences) >= 2
