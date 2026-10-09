@@ -251,6 +251,8 @@ def test_impossibility_proof_policy_disabled_by_default():
 def test_agent_task_visibility_allowlist(engine):
     identity, task = assigned(engine)
     assert set(public_task(task)) == {"id", "category", "prompt", "reward_multiplier"}
+    assert "without an equals sign" in public_task(task)["prompt"]
+    assert "without an equals sign" not in task["prompt"]
     visible = json.dumps(engine.personal_state(identity))
     assert all(word not in visible for word in ("impossible", "validator", "grader", "population"))
 

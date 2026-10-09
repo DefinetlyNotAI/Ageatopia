@@ -59,7 +59,8 @@ class ToolSettings(StrictModel):
 
 BASE_CONTEXT = (
     "Complete tasks using the provided tools. Begin by calling task with operation=request. "
-    "Solve the returned problem. Use /workspace when the task requires files or programs.\n\n"
+    "Solve the returned problem. Use /workspace when the task requires files or programs. "
+    "Use workspace to independently check calculations before submitting.\n\n"
     "The task tool lets you request, inspect, skip or submit work. Inspect your current task "
     "with operation=inspect. Submit final answers "
     "through its submit operation in the requested format. Chat messages are not submissions. "

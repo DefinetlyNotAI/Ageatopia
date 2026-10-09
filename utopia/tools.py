@@ -53,7 +53,11 @@ TOOLS = [
         "request another task.",
         {
             "operation": {"type": "string", "enum": ["request", "inspect", "skip", "submit"]},
-            "answer": {"type": "string", "description": "Final answer for submit; optional"},
+            "answer": {
+                "type": "string",
+                "description": "Required for operation=submit; omit for request, inspect and skip. "
+                "Use the answer format specified by the task.",
+            },
         },
         ["operation"],
     ),

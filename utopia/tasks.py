@@ -14,7 +14,14 @@ DATASET_VERSION = "bank-2"
 
 
 def public_task(task: dict) -> dict:
-    return {key: task[key] for key in ("id", "category", "prompt", "reward_multiplier")}
+    visible = {key: task[key] for key in ("id", "category", "prompt", "reward_multiplier")}
+    if task["category"] == "mathematics":
+        visible["prompt"] += (
+            " Submit one plain mathematical expression, without an equals sign, "
+            "LaTeX or explanatory prose. Supported notation includes numbers, x, pi, "
+            "sqrt(number), +, -, *, / and ** for powers."
+        )
+    return visible
 
 
 def generate_tasks(config) -> list[dict]:
