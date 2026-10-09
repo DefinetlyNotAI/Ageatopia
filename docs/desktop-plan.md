@@ -37,5 +37,6 @@ Commit simulation, desktop controls and observatory changes as coherent themes.
 Do not push. Record unverified training/hardware paths explicitly.
 
 GPU adapter training, continuation and bounded inference host-cache configuration
-are verified. Full live acceptance and held-out adapter quality remain unresolved;
+are verified. Held-out math evaluation found no improvement from the saved adapter.
+Full live acceptance, improved adapter performance and live Explorer access remain unresolved;
 see desktop-evidence.md. The overall goal is not marked complete.

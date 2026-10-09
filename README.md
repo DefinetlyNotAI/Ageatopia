@@ -251,6 +251,20 @@ Manifests retain parent lineage, dataset hash, training metrics, device and peak
 allocation. Actual training and quality improvement require a compatible unquantized
 base model, training dependencies and evaluation; Ollama inference weights alone are
 not a training checkpoint.
+
+Compare an adapter with its unchanged base on held-out math answers before selecting
+it for inference:
+
+```powershell
+.\.venv\Scripts\python.exe -m utopia.evaluate_adapter --adapter .data/adapter-1 --training-data trajectories.jsonl --model LOCAL_MODEL_PATH --output .data/adapter-1-evaluation.json
+```
+
+Supply every training dataset in the adapter's lineage after `--training-data`.
+The evaluator checks their hashes, excludes their recorded task prompts, uses the
+same deterministic decoding for both models, and grades generated answers without
+putting private validators into model context. Existing reports are preserved.
+This evaluates mathematical answers; tool use, cyber tasks and full simulation
+performance still need separate validation. Evaluation never activates an adapter.
 `GET /comparison` compares model/context outcomes across runs. For real provider
 benchmarks, run `python -m utopia.benchmark --models qwen3.5:2b qwen3.5:0.8b`.
 

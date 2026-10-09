@@ -100,7 +100,7 @@ applied to the different Qwen3.5 base used by the default inference model.
 
 ## Verification ledger
 
-- Python suite: 89 passed, three real-provider tests skipped in the standard run.
+- Python suite: 90 passed, three real-provider tests skipped in the standard run.
   This includes task-request guidance and adding the event lookup index to an
   existing database without losing its world, resource-error reporting and early
   adapter validation, model-server ownership, cache configuration and TUI configuration
@@ -153,7 +153,8 @@ applied to the different Qwen3.5 base used by the default inference model.
   existing development tooling; unrelated major upgrades were not forced.
 
 Actual GPU LoRA training and adapter continuation have passed as described above.
-Improvement in held-out simulation tasks and adapter activation remain unverified.
+Held-out math evaluation below found no improvement; full simulation improvement
+and adapter activation remain unverified.
 Memory-based adaptation changes no model weights. The overall goal remains active
 pending acceptance work.
 
@@ -182,4 +183,38 @@ A separate 4B attempt under the same cache budget failed during preload with CUD
 shared-object initialization error, before simulation started. A subsequent default
 2B preload succeeded in 5,353 ms. The cache cap is verified for the default model;
 this does not establish that all larger model allocations fit or resolve that 4B
-startup failure. Full live acceptance and held-out adapter quality remain open.
+startup failure. Full live acceptance and broader adapter quality remain open.
+
+## Held-out adapter evaluation, 2026-10-09
+
+`utopia.evaluate_adapter` compares the unchanged base with its saved adapter on
+identical generated math tasks. It validates base and training-dataset lineage before
+loading weights, excludes recorded training prompts, and uses deterministic decoding
+with thinking disabled and a 128-token limit. Only public prompts enter the model;
+the existing private grader verifies the resulting answers. Reports preserve actual
+answers and grading outcomes, without private validators or automatic activation.
+
+The saved Qwen3-0.6B lora-2 adapter was evaluated on CUDA with two task seeds:
+
+| Seed | Problems | Base correct | Adapter correct | Evaluation time for both |
+| --- | ---: | ---: | ---: | ---: |
+| 20261009 | 12 | 1 | 1 | 14.579 s |
+| 20261010 | 12 | 0 | 0 | 17.531 s |
+
+Both seeds produced identical base/adapter answers. The first had seven malformed,
+four incorrect and one correct. These measurements contradict any claim that the two
+single-update training iterations demonstrated improved answers. Reports are
+retained in `.data/training-verification/held-out-math*.json`. This limited evaluation
+does not exercise tools, cyber tasks, agent memory or a full simulation. The adapter
+has not been activated; a larger, better-curated dataset and further evaluation are
+still needed before claiming improvement. The standard suite now passes 90 tests,
+with three real-provider tests skipped; Ruff check and formatting pass.
+
+## Live Explorer directory investigation
+
+A real temporary Docker sandbox verified that WSL can read a changing workspace
+through the daemon's process/mount namespace. Windows UNC access to that path was
+inaccessible, and a bind-mount exposure attempt failed. All temporary containers and
+mount directories were removed. No stable live Explorer mapping was installed;
+the existing button remains explicitly labeled as a snapshot. Opening the actual
+live sandbox directory remains unfinished.

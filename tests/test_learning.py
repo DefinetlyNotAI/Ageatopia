@@ -1,3 +1,4 @@
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -6,10 +7,47 @@ from sqlalchemy import delete, inspect
 from sqlalchemy.exc import IntegrityError
 
 from utopia.engine import Engine
+from utopia.evaluate_adapter import evaluation_tasks
 from utopia.runtime import Runtime
 from utopia.store import Store, events
 from utopia.tools import ToolExecutor
 from utopia.train import train
+
+
+def test_adapter_evaluation_excludes_training_prompts_and_requires_complete_lineage(tmp_path):
+    from utopia.config import WorldConfig
+    from utopia.tasks import generate_tasks, public_task
+
+    original = generate_tasks(
+        WorldConfig(seed=20261009, task_count=80, cyber_fraction=0, impossible_fraction=0)
+    )[0]
+    dataset = tmp_path / "training.jsonl"
+    dataset.write_text(
+        json.dumps(
+            {
+                "agent_id": "one",
+                "model_version": "source",
+                "context_version": "3",
+                "messages": [
+                    {"role": "tool", "name": "task", "content": json.dumps(public_task(original))}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = {
+        "model_version": "base",
+        "dataset_version": hashlib.sha256(dataset.read_bytes()).hexdigest(),
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    _, tasks = evaluation_tasks(tmp_path, [dataset], "base", 20261009, 12)
+    assert len(tasks) == 12 and original["prompt"] not in {task["prompt"] for task in tasks}
+    with pytest.raises(ValueError, match="base model"):
+        evaluation_tasks(tmp_path, [dataset], "different", 20261009, 12)
+    manifest["parent_adapter"] = {"dataset_version": "missing"}
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="every adapter"):
+        evaluation_tasks(tmp_path, [dataset], "base", 20261009, 12)
 
 
 @pytest.mark.parametrize(
