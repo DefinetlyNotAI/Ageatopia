@@ -276,9 +276,16 @@ are separate from world events; no background weight-training service is enabled
 Periodic offline updates can continue an adapter using `--resume-adapter PREVIOUS`
 and a higher `--iteration`, writing each update into a new `--output` directory.
 Manifests retain parent lineage, dataset hash, training metrics, device and peak GPU
-allocation. Actual training and quality improvement require a compatible unquantized
-base model, training dependencies and evaluation; Ollama inference weights alone are
+allocation. Actual training and quality improvement require a compatible Hugging Face
+base checkpoint, training dependencies and evaluation; Ollama inference weights alone are
 not a training checkpoint.
+
+For supported CUDA GPUs with limited memory, install `.[training,training-4bit]` and
+add `--load-in-4bit` to train LoRA on an NF4 base with double quantization and FP16
+computation. Only adapters are trained; base weights remain frozen. The manifest
+records this mode, continuation requires the same mode, and evaluation automatically
+loads the same quantized base for both comparisons. Four-bit mode requires CUDA;
+it does not silently fall back to CPU or enable background training.
 
 Compare an adapter with its unchanged base on held-out math answers before selecting
 it for inference:

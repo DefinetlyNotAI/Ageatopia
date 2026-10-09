@@ -96,17 +96,36 @@ def evaluate(args):
 
     import torch
     from peft import PeftModel
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
     if args.mode == "submissions" and "<tool_call>" not in tokenizer.get_chat_template(tools=TOOLS):
         raise ValueError("Submission evaluation requires a chat template using tool_call tags")
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    quantization = manifest.get("base_quantization", "none")
+    model_options = {}
+    if quantization != "none":
+        if quantization != "nf4-double-fp16":
+            raise ValueError("Unsupported adapter base quantization")
+        if device != "cuda":
+            raise ValueError("Four-bit evaluation requires CUDA and training-4bit dependencies")
+        model_options = {
+            "device_map": {"": 0},
+            "quantization_config": BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_compute_dtype=torch.float16,
+            ),
+        }
     base = AutoModelForCausalLM.from_pretrained(
         args.model,
         trust_remote_code=False,
         torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-    ).to(device)
+        **model_options,
+    )
+    if quantization == "none":
+        base = base.to(device)
     model = PeftModel.from_pretrained(base, args.adapter).eval()
     grader = Grader()
 
@@ -177,6 +196,7 @@ def evaluate(args):
             (args.adapter / "adapter_model.safetensors").read_bytes()
         ).hexdigest(),
         "training_objective": manifest.get("training_objective"),
+        "base_quantization": quantization,
         "training_dataset_version": manifest["dataset_version"],
         "seed": args.seed,
         "task_count": len(tasks),

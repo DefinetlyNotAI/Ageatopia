@@ -161,6 +161,30 @@ def test_adapter_continuation_validates_parent_before_loading_weights(
         train(SimpleNamespace(resume_adapter=tmp_path, model=model, iteration=iteration))
 
 
+@pytest.mark.parametrize(
+    ("quantization", "load_in_4bit"), [("nf4-double-fp16", False), ("none", True)]
+)
+def test_adapter_continuation_rejects_different_base_quantization_before_loading(
+    tmp_path, quantization, load_in_4bit
+):
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "model_version": "base",
+                "training_iteration": 1,
+                "base_quantization": quantization,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="base quantization"):
+        train(
+            SimpleNamespace(
+                resume_adapter=tmp_path, model="base", iteration=2, load_in_4bit=load_in_4bit
+            )
+        )
+
+
 def test_personal_learning_reflection_and_fear_survive_recovery(engine):
     identity, other = list(engine.state["agents"])[:2]
     engine.reflect(

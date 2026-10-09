@@ -92,6 +92,9 @@ def main():
     parser.add_argument("--iteration", type=int, default=1)
     parser.add_argument("--max-length", type=int, default=1024)
     parser.add_argument(
+        "--load-in-4bit", action="store_true", help="Train LoRA on a CUDA NF4 quantized base"
+    )
+    parser.add_argument(
         "--resume-adapter", type=Path, help="Continue a prior adapter in a new output directory"
     )
     args = parser.parse_args()
@@ -134,23 +137,41 @@ def main():
 def train(args):
     parent = None
     resume = getattr(args, "resume_adapter", None)
+    quantization = "nf4-double-fp16" if getattr(args, "load_in_4bit", False) else "none"
     if resume:
         parent = json.loads((resume / "manifest.json").read_text(encoding="utf-8"))
         if parent["model_version"] != args.model:
             raise ValueError("Adapter base model must match this training model")
         if args.iteration <= parent["training_iteration"]:
             raise ValueError("Training iteration must advance beyond the parent adapter")
+        if parent.get("base_quantization", "none") != quantization:
+            raise ValueError("Adapter base quantization must match this training run")
 
     import torch
     from datasets import Dataset
-    from peft import LoraConfig, PeftModel, get_peft_model
+    from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
     from transformers import (
         AutoModelForCausalLM,
         AutoTokenizer,
+        BitsAndBytesConfig,
         DataCollatorForSeq2Seq,
         Trainer,
         TrainingArguments,
     )
+
+    model_options = {}
+    if quantization != "none":
+        if not torch.cuda.is_available():
+            raise ValueError("Four-bit training requires CUDA and the training-4bit dependencies")
+        model_options = {
+            "device_map": {"": 0},
+            "quantization_config": BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_compute_dtype=torch.float16,
+            ),
+        }
 
     rows = [
         json.loads(line) for line in args.dataset.read_text(encoding="utf-8").splitlines() if line
@@ -170,7 +191,10 @@ def train(args):
         args.model,
         trust_remote_code=False,
         torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        **model_options,
     )
+    if quantization != "none":
+        model = prepare_model_for_kbit_training(model)
     if resume:
         model = PeftModel.from_pretrained(model, resume, is_trainable=True)
     else:
@@ -229,6 +253,7 @@ def train(args):
         "context_versions": sorted({r["context_version"] for r in rows}),
         "continuous_training": False,
         "training_objective": "verified-assistant-submission-only",
+        "base_quantization": quantization,
         "restricted_vocab_projection": restrict_logits,
         "supervised_tokens": sum(
             sum(label != -100 for label in sample["labels"]) for sample in samples

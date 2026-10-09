@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff>=0.14,<1"]
 training = ["torch>=2.6", "transformers>=4.50,<6", "peft>=0.15,<1", "datasets>=3,<5"]
+training-4bit = ["bitsandbytes>=0.50.2,<0.51"]
 
 [project.scripts]
 utopia = "utopia.cli:main"

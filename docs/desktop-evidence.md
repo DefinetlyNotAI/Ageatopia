@@ -396,3 +396,46 @@ and adapter 0/12. Neither produced a valid submit call. The preserved report is
 `held-out-submissions-pooled-1.json`. More examples and updates did not demonstrate
 improvement in this check; the adapter remains inactive. Standard tests passed 101
 with three real-provider tests skipped, and Ruff check/format passed.
+
+## Four-bit training on the larger checkpoint
+
+The official Qwen3-1.7B checkpoint was downloaded at revision
+`70d244cc86ccca08cf5af4e1e306ecf908b1ad5e` into
+`.data/training-verification/base-1.7b`. An FP16 attempt completed two optimizer
+steps but reported a CUDA allocation retry; another shell could not start because
+Windows paging capacity was exhausted. The training process was interrupted before
+saving a checkpoint. Its started-only event file and empty output directory remain
+preserved; no completed training or saved adapter is claimed for that attempt.
+
+Optional `--load-in-4bit` training now uses bitsandbytes NF4 double quantization
+with FP16 computation on CUDA. The base is prepared and frozen before LoRA is
+added or resumed. Continuation checks base quantization before loading weights;
+evaluation reads it from the manifest and compares disabled/enabled adapters on
+the same quantized base. Standard training remains available without bitsandbytes.
+The separate `training-4bit` extra was verified using bitsandbytes 0.50.2 on Windows,
+PyTorch 2.14.1+cu130 and the RTX 3050 6GB Laptop GPU.
+
+A fresh quantized Qwen3-1.7B adapter trained on all 31 pooled verified submissions
+for one epoch and four optimizer steps. It completed without a CUDA allocation
+warning, taking 94.050 s including save, with peak GPU allocation 4,043,925,504
+bytes and training loss 0.622905. The saved adapter is
+`.data/training-verification/adapter-pooled-1.7b-nf4-1`; its manifest and completed
+event record preserve dataset hash, 15 identities, 4,389 supervised tokens and
+base quantization. This confirms that this workload fits, not that it improves
+agent performance. No adapter has been activated.
+
+Paired CUDA submission evaluations used the same quantized base, real tool
+definitions, greedy decoding and a 256-token limit on 12 held-out tasks per seed.
+Seed 20261009 scored base 0/12 and adapter 1/12 in 142.754 s; valid submit calls
+increased from one to three. The gained success was a Boolean conjunction count.
+Seed 20261010 scored 0/12 for both models in 99.908 s. The first gain did not
+repeat; reliable learning improvement and live simulation acceptance remain
+unproven. Reports are `held-out-submissions-pooled-1.7b-nf4-1.json` and
+`held-out-submissions-pooled-1.7b-nf4-1-seed20261010.json` in the same evidence
+directory. These single-turn checks do not execute generated tools.
+
+Thirteen focused learning tests and Ruff check/format passed. Focused code review
+found no actionable issues. The implementation follows the
+[PEFT quantized training procedure](https://huggingface.co/docs/peft/developer_guides/quantization)
+and the installed release's
+[Windows CUDA support](https://huggingface.co/docs/bitsandbytes/v0.50.2/en/installation).
