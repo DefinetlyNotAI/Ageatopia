@@ -6,7 +6,7 @@ from pathlib import Path
 
 from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
@@ -80,16 +80,18 @@ class ControlApp(App):
     CSS = """
     Screen { layout: vertical; }
     #service-status { height: 3; padding: 1 2; color: $text-muted; }
+    #service-bar { height: 3; }
     #service-progress { width: 4; height: 1; }
     #main { height: 1fr; }
     #world-list { width: 48%; }
     #config-panel { width: 52%; padding: 0 1; }
-    #worlds { height: 1fr; }
+    #worlds { height: 1fr; min-height: 8; }
     #selected-status { height: 2; padding: 0 1; color: $text-muted; }
     #world-config { height: 1fr; border: round $primary-darken-2; }
     #app-config { height: 1fr; border: round $primary-darken-2; }
-    .actions { height: auto; padding: 1 0; }
-    .actions Button { margin-right: 1; }
+    .actions { height: auto; }
+    .actions Button { margin-right: 1; width: 1fr; min-width: 0; }
+    #service-actions { grid-size: 2; grid-gutter: 0 1; height: 6; }
     #operator-log { height: 10; border: round $primary-darken-2; }
     """
 
@@ -108,14 +110,14 @@ class ControlApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Horizontal():
+        with Horizontal(id="service-bar"):
             yield Label(self._stopped_text(), id="service-status")
             yield LoadingIndicator(id="service-progress")
         with Horizontal(id="main"):
-            with Vertical(id="world-list"):
+            with VerticalScroll(id="world-list"):
                 yield DataTable(id="worlds", cursor_type="row")
                 yield Label("No world selected", id="selected-status")
-                with Horizontal(classes="actions"):
+                with Grid(classes="actions", id="service-actions"):
                     yield Button("Start services", id="services-start", variant="success")
                     yield Button("Stop services", id="services-stop", variant="error")
                     yield Button("Launch desktop", id="desktop", variant="primary")
@@ -123,11 +125,12 @@ class ControlApp(App):
                     yield Button("Start", id="start")
                     yield Button("Pause", id="pause")
                     yield Button("Resume", id="resume")
+                with Horizontal(classes="actions"):
                     yield Button("Terminate", id="terminate", variant="error")
                     yield Button("Delete world", id="delete", variant="error")
                 with Horizontal(classes="actions"):
                     yield Button("Refresh worlds", id="refresh")
-            with Vertical(id="config-panel"):
+            with VerticalScroll(id="config-panel"):
                 yield Label("Application configuration · saved to JSON")
                 yield TextArea(
                     json.dumps(
