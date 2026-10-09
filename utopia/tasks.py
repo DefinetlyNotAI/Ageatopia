@@ -1,13 +1,16 @@
 import ast
 import base64
+import csv
 import hashlib
+import io
 import json
 import random
+import zlib
 from decimal import Decimal
 
 import sympy as sp
 
-DATASET_VERSION = "bank-1"
+DATASET_VERSION = "bank-2"
 
 
 def public_task(task: dict) -> dict:
@@ -41,6 +44,8 @@ def generate_tasks(config) -> list[dict]:
         )
     )
     tasks = []
+    math_index = 0
+    cyber_index = 0
     x = sp.Symbol("x")
     for index in range(config.task_count):
         identity = f"task-{index + 1:04d}"
@@ -69,7 +74,13 @@ def generate_tasks(config) -> list[dict]:
                 "web",
                 "flag-discovery",
                 "exploitation",
-            )[index % 8]
+                "compression",
+                "rotating-xor",
+                "log-forensics",
+                "packet-analysis",
+            )[cyber_index % 12]
+            if not impossible:
+                cyber_index += 1
             flag = (
                 "flag{"
                 + hashlib.sha256(f"{config.seed}:{identity}".encode()).hexdigest()[:24]
@@ -123,6 +134,40 @@ def generate_tasks(config) -> list[dict]:
                 task["files"] = {
                     f"{directory}/archive.txt": "\n".join(["archived synthetic log"] * a + [flag])
                 }
+            elif kind == "compression":
+                payload = base64.b64encode(zlib.compress(flag.encode())).decode()
+                task["files"] = {
+                    f"{directory}/payload.txt": payload,
+                    f"{directory}/README.txt": "Archived payload: base64-wrapped zlib data.\n",
+                }
+            elif kind == "rotating-xor":
+                ciphertext = bytes(
+                    byte ^ ((a + offset) % 256) for offset, byte in enumerate(flag.encode())
+                )
+                task["files"] = {
+                    f"{directory}/cipher.txt": ciphertext.hex(),
+                    f"{directory}/README.txt": (
+                        "The XOR key is a byte that increases by one at each position, "
+                        "wrapping at 256. The starting key is unknown.\n"
+                    ),
+                }
+            elif kind == "log-forensics":
+                records = [
+                    {"event": "session.opened", "token": rng.randbytes(16).hex()} for _ in range(24)
+                ]
+                records.append({"event": "session.recovered", "token": flag})
+                rng.shuffle(records)
+                task["files"] = {
+                    f"{directory}/events.jsonl": "\n".join(json.dumps(row) for row in records)
+                }
+            elif kind == "packet-analysis":
+                packets = list(enumerate(flag.encode()))
+                rng.shuffle(packets)
+                task["files"] = {
+                    f"{directory}/packets.csv": "sequence,byte\n"
+                    + "\n".join(f"{sequence},{byte}" for sequence, byte in packets),
+                    f"{directory}/README.txt": "Captured stream bytes arrived out of order.\n",
+                }
             else:
                 port = 10000 + index
                 task["service_port"] = port
@@ -151,7 +196,8 @@ def generate_tasks(config) -> list[dict]:
                 validator={"type": "inconsistent", "left": a, "right": a + 1},
             )
         else:
-            kind = index % 7
+            kind = math_index % 12
+            math_index += 1
             if kind == 0:
                 task.update(
                     subtype="algebra",
@@ -196,12 +242,53 @@ def generate_tasks(config) -> list[dict]:
                     answer=str(a * x ** (a - 1)),
                     validator={"type": "derivative", "power": a},
                 )
-            else:
+            elif kind == 6:
                 task.update(
                     subtype="computational",
                     prompt=f"Evaluate the sum of k^2 for k=1..{a}.",
                     answer=str(sum(k * k for k in range(1, a + 1))),
                     validator={"type": "sum-squares", "n": a},
+                )
+            elif kind == 7:
+                rhs1, rhs2 = a * a + b, a + b * b
+                task.update(
+                    subtype="linear-system",
+                    prompt=f"Solve {a}*x + y = {rhs1} and x + {b}*y = {rhs2}. Submit x.",
+                    answer=str(a),
+                    validator={"type": "linear-system", "a": a, "b": b, "rhs1": rhs1, "rhs2": rhs2},
+                )
+            elif kind == 8:
+                task.update(
+                    subtype="modular-arithmetic",
+                    prompt=f"Find the remainder of {a}^{b} divided by 17.",
+                    answer=str(pow(a, b, 17)),
+                    validator={"type": "modular-power", "base": a, "power": b, "modulus": 17},
+                )
+            elif kind == 9:
+                task.update(
+                    subtype="probability",
+                    prompt=f"A bag has {a} red and {b} blue balls. Two balls are drawn "
+                    "without replacement. What is the probability both are red? "
+                    "Submit an exact fraction.",
+                    answer=str(sp.Rational(sp.binomial(a, 2), sp.binomial(a + b, 2))),
+                    validator={"type": "two-red", "red": a, "blue": b},
+                )
+            elif kind == 10:
+                values = [rng.randint(-20, 30) for _ in range(7)]
+                task.update(
+                    subtype="statistics",
+                    prompt=f"Find the arithmetic mean of {values}. "
+                    "Submit an exact number or fraction.",
+                    answer=str(sp.Rational(sum(values), len(values))),
+                    validator={"type": "mean", "values": values},
+                )
+            else:
+                matrix = [[a, b], [b, a + 1]]
+                task.update(
+                    subtype="linear-algebra",
+                    prompt=f"Find the determinant of the 2 by 2 matrix {matrix}.",
+                    answer=str(sp.Matrix(matrix).det()),
+                    validator={"type": "determinant-2", "matrix": matrix},
                 )
         validate_task(task)
         tasks.append(task)
@@ -230,12 +317,25 @@ def validate_task(task):
             subtype = task.get("subtype")
             decoded = []
             for name, value in files.items():
-                if subtype == "crypto" and name.endswith("cipher.txt"):
+                if subtype in {"crypto", "rotating-xor"} and name.endswith("cipher.txt"):
                     cipher = bytes.fromhex(value)
                     decoded.extend(
-                        bytes(byte ^ key for byte in cipher).decode(errors="replace")
+                        bytes(
+                            byte ^ (key if subtype == "crypto" else (key + offset) % 256)
+                            for offset, byte in enumerate(cipher)
+                        ).decode(errors="replace")
                         for key in range(256)
                     )
+                elif subtype == "compression" and name.endswith("payload.txt"):
+                    decoded.append(zlib.decompress(base64.b64decode(value)).decode())
+                elif subtype == "packet-analysis" and name.endswith("packets.csv"):
+                    packets = sorted(
+                        (int(row["sequence"]), int(row["byte"]))
+                        for row in csv.DictReader(io.StringIO(value))
+                    )
+                    if [sequence for sequence, _ in packets] != list(range(len(packets))):
+                        raise ValueError("Packet sequence must be complete and unique")
+                    decoded.append(bytes(byte for _, byte in packets).decode())
                 elif subtype in {"reverse", "source-audit", "debugging"} and name.endswith(".py"):
                     tree = ast.parse(value)
                     for statement in tree.body:
@@ -276,5 +376,18 @@ def expected_math(rule):
         case "sum-squares":
             n = rule["n"]
             return sp.Integer(n * (n + 1) * (2 * n + 1) // 6)
+        case "linear-system":
+            return sp.Rational(rule["b"] * rule["rhs1"] - rule["rhs2"], rule["a"] * rule["b"] - 1)
+        case "modular-power":
+            return sp.Mod(sp.Integer(rule["base"]) ** rule["power"], rule["modulus"])
+        case "two-red":
+            return sp.Rational(rule["red"], rule["red"] + rule["blue"]) * sp.Rational(
+                rule["red"] - 1, rule["red"] + rule["blue"] - 1
+            )
+        case "mean":
+            return sp.Rational(sum(rule["values"]), len(rule["values"]))
+        case "determinant-2":
+            matrix = rule["matrix"]
+            return sp.Integer(matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0])
         case _:
             raise ValueError("Unsupported math validator")

@@ -48,7 +48,8 @@ TOOLS = [
     ),
     function(
         "task",
-        "Request, inspect, skip or submit your current task. Submit ends evaluation.",
+        "Request, inspect, skip or submit your current task. After submitting or skipping, "
+        "request another task.",
         {
             "operation": {"type": "string", "enum": ["request", "inspect", "skip", "submit"]},
             "answer": {"type": "string", "description": "Final answer for submit; optional"},

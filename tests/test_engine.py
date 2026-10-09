@@ -26,6 +26,7 @@ def assigned(engine, identity=None):
 def test_initial_population_and_context_separation(engine):
     agents = list(engine.state["agents"].values())
     assert len(agents) == len({a["id"] for a in agents}) == 6
+    assert len({a["context_profile"] for a in agents}) == 6
     assert all(a["lifetime_ms"] == 1_200_000 for a in agents)
     agents[0]["history"].append({"role": "user", "content": "private"})
     assert all(a["history"][-1]["content"] != "private" for a in agents[1:])
@@ -258,13 +259,35 @@ def test_seeded_exact_distribution_and_validation():
     config = WorldConfig()
     tasks = generate_tasks(config)
     assert tasks == generate_tasks(config)
-    assert sum(t["impossible"] for t in tasks) == 4
-    assert sum(t["category"] == "cybersecurity" for t in tasks) == 10
+    assert len(tasks) == 80
+    assert sum(t["impossible"] for t in tasks) == 8
+    assert sum(t["category"] == "cybersecurity" for t in tasks) == 20
+    assert len({t["subtype"] for t in tasks if not t["impossible"]}) == 24
     for task in tasks:
         if not task["impossible"]:
             assert Grader().grade(task, task["answer"]).kind == GradeKind.CORRECT
     with pytest.raises(ValidationError):
         WorldConfig(task_count=11)
+
+
+@pytest.mark.parametrize("subtype", ["compression", "rotating-xor", "packet-analysis"])
+def test_encoded_challenges_reject_an_incorrect_registered_flag(subtype):
+    tasks = generate_tasks(WorldConfig(task_count=24, impossible_fraction=0, cyber_fraction=1))
+    task = next(task for task in tasks if task["subtype"] == subtype)
+    task["answer"] = "flag{incorrect}"
+    with pytest.raises(ValueError, match="does not encode"):
+        validate_task(task)
+
+
+def test_packet_challenge_rejects_duplicate_sequence_numbers():
+    tasks = generate_tasks(WorldConfig(task_count=24, impossible_fraction=0, cyber_fraction=1))
+    task = next(task for task in tasks if task["subtype"] == "packet-analysis")
+    filename = next(name for name in task["files"] if name.endswith(".csv"))
+    rows = task["files"][filename].splitlines()
+    rows[2] = rows[1]
+    task["files"][filename] = "\n".join(rows)
+    with pytest.raises(ValueError, match="complete and unique"):
+        validate_task(task)
 
 
 @pytest.mark.parametrize(

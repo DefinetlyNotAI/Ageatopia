@@ -52,8 +52,10 @@ can supply their own `model` settings. `agent_model_overrides` maps zero-based
 population slots to model settings and takes precedence over profiles.
 `context_assignment` supports round-robin or seeded random assignments.
 
-New worlds use a compact system prompt and four round-robin expertise profiles:
-generalist, mathematics, programming and security analysis. The creation form
+New worlds use a compact system prompt and six round-robin expertise profiles:
+generalist, mathematician, programmer, security analyst, data analyst and
+experimentalist. Agents check tool results, change unproductive approaches, and
+request another task after a submission or skip. The creation form
 exposes the base system instructions directly. Existing worlds and saved presets
 keep their exact original prompts and profiles.
 
@@ -63,9 +65,12 @@ events. **Deleted worlds** in the sidebar lets you restore it, including after a
 server restart. This control does not permanently erase research records.
 
 Task counts must represent the requested impossible fraction exactly: the default
-40 tasks contain 36 solvable tasks and four impossible tasks. Difficulty is an
+80 tasks contain 72 solvable tasks and eight impossible tasks. Difficulty is an
 independent field. The fixed bank requires independently validated private
 answers and validator metadata; see `utopia/tasks.py` for the supported recipes.
+The bank includes 24 recipes across mathematics and cybersecurity, including
+linear systems, modular arithmetic, probability, statistics, determinants,
+compressed payloads, rotating XOR, log forensics and packet reconstruction.
 
 Five minutes is the default respawn delay, resolving conflicting plan statements
 in favor of the tests and acceptance criteria. Set `economy.respawn_delay_ms` to
