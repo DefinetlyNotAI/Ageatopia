@@ -158,11 +158,15 @@ Clang/LLVM 22 replaces GNU binutils and supplies `cc`, `gcc`, `ld`, `objdump`,
 numeric ptrace process events replace strace, including short-lived children and
 thread exec ID changes; the observer never decodes mutable tracee filename buffers.
 
-BusyBox 1.38.0 is built from the official checksum-verified source archive with
-four published security patches. It is registered as a real APK with its actual
-source origin and version. Source compilation dependencies remain in the builder
-stage. Agent programs retain the existing unprivileged UID and resource limits.
-Python installers remain removed. The kernel and custom drivers are unchanged.
+BusyBox is built from the project's own mirror at commit
+[`e3e1ad1587df43d9eaece0e29702e2089c5cbc10`](https://github.com/vda-linux/busybox_mirror/tree/e3e1ad1587df43d9eaece0e29702e2089c5cbc10).
+Its unmodified upstream Makefile identifies the development version as
+`1.39.0.git`; the APK records `1.39.0_git-r0` and the real BusyBox source origin.
+The archive is SHA-256 verified. This revision includes the IFS cleanup fix;
+the published wget, AWK and shell recursion patches are applied during the build.
+Source compilation dependencies remain in the builder stage. Agent programs
+retain the existing unprivileged UID and resource limits. Python installers
+remain removed. The kernel and custom drivers are unchanged.
 
 Patch sources and authors:
 
@@ -171,25 +175,26 @@ Patch sources and authors:
   [shell IFS cleanup](https://lists.busybox.net/pipermail/busybox/2026-June/092360.html),
   and [shell function recursion](https://lists.busybox.net/pipermail/busybox/2026-June/092354.html).
 
-The final unfiltered scans use the same databases recorded above:
+The upgraded image's unfiltered scans report:
 
 | Scanner | Findings | Report |
 | --- | --- | --- |
-| Grype 0.120.1 | 5 version matches; no ignored findings | `.data/image-vulnerabilities-final.json` |
-| Trivy 0.75.0 | 0 | `.data/image-trivy-final.json` |
+| Grype 0.120.1 | 0 | `.data/image-vulnerabilities-upgraded.json` |
+| Trivy 0.75.0 | 0 | `.data/image-trivy-upgraded.json` |
 
-None of the nine reported binutils/strace CVEs remain. Grype retains
-CVE-2026-87910 and CVE-2026-12345 against Python 3.15.0rc3, whose fixes are included
-in that release candidate, and CVE-2026-38753/38754/38755 against BusyBox 1.38.0,
-whose source patches are included in this build. These NVD version matches do not
-account for those fixes. No ignore rules, version relabeling, package exclusions,
-or VEX suppression were used. A zero-finding unfiltered Grype result remains
-unachieved. Docker Scout still requires account sign-in for an independent scan.
+None of the nine reported binutils/strace CVEs remain. Grype's database was built
+2026-10-09 at 06:32:32 UTC. No custom ignore rules, version relabeling, package
+exclusions or VEX suppression were used. The scanned image config is
+`sha256:4d3f1b46eaa201005a98291e38d1a95f053b436226210aa1fed59a2f5cf26076`.
+Docker Scout still requires account sign-in for an independent scan.
 
 The real integration suite exercises malformed URL rejection, shell recursion
 limits, POP3 injection rejection, C compilation, capability/network isolation,
 process lifecycles, non-leader thread exec, permanent termination, filesystem
 recovery, real Ollama tool calls and all six initial agents acting.
+All three integrations passed on the upgraded image in 53.95 seconds. All six
+agents performed successful workspace actions, made at least two inference
+calls, and a challenge was completed. The standard suite passed 61 tests.
 
 ## Finding the local image and reclaiming storage
 
@@ -242,6 +247,6 @@ The restored image was rechecked with all three real integrations passing in
 The standard suite passed 61 tests. Trivy still reported zero findings; Grype's
 2026-10-08 database reported three BusyBox version matches (CVE-2026-38753,
 CVE-2026-38754 and CVE-2026-38755), down from five in the earlier scan. All nine
-originally reported binutils/strace CVEs remain absent. The unfiltered zero-Grype
-gate is still incomplete. Reports are `.data/image-trivy-recheck.json` and
+originally reported binutils/strace CVEs remained absent. At that checkpoint the
+unfiltered zero-Grype gate was incomplete. Reports are `.data/image-trivy-recheck.json` and
 `.data/image-vulnerabilities-recheck.json`.

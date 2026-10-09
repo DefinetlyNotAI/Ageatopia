@@ -1,13 +1,12 @@
 FROM python:3.15.0rc3-alpine3.24@sha256:f288a00331ddad8ddf86aa9d83331f188d9a5b1999dea3762adf2af1968b0c04 AS busybox-builder
 RUN apk add --no-cache build-base linux-headers curl \
-    && curl -fsSLo /tmp/busybox.tar.bz2 https://busybox.net/downloads/busybox-1.38.0.tar.bz2 \
-    && printf '%s\n' '34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2  /tmp/busybox.tar.bz2' | sha256sum -c - \
-    && tar -xjf /tmp/busybox.tar.bz2 -C /tmp
-WORKDIR /tmp/busybox-1.38.0
+    && curl -fsSLo /tmp/busybox.tar.gz https://codeload.github.com/vda-linux/busybox_mirror/tar.gz/e3e1ad1587df43d9eaece0e29702e2089c5cbc10 \
+    && printf '%s\n' 'fe995afce62de3e312a8d1960e735a0f64dc46127184d62a6752a4ce76b653fb  /tmp/busybox.tar.gz' | sha256sum -c - \
+    && tar -xzf /tmp/busybox.tar.gz -C /tmp
+WORKDIR /tmp/busybox_mirror-e3e1ad1587df43d9eaece0e29702e2089c5cbc10
 COPY busybox-*.patch /tmp/
 RUN patch -p1 < /tmp/busybox-wget.patch \
     && patch -p1 < /tmp/busybox-awk.patch \
-    && patch -p1 < /tmp/busybox-ash-ifs.patch \
     && patch -p1 < /tmp/busybox-ash-recursion.patch \
     && make defconfig \
     && sed -i 's/^CONFIG_TC=y/# CONFIG_TC is not set/' .config \
@@ -16,7 +15,7 @@ RUN patch -p1 < /tmp/busybox-wget.patch \
     && cp busybox /tmp/package/bin/busybox \
     && ln -s busybox /tmp/package/bin/sh \
     && apk mkpkg --files /tmp/package --output /tmp/busybox.apk \
-        --info name:busybox --info version:1.38.0-r1 \
+        --info name:busybox --info version:1.39.0_git-r0 \
         --info description:BusyBox-with-security-backports --info license:GPL-2.0-only \
         --info origin:busybox --info url:https://busybox.net/ \
         --info arch:$(apk --print-arch) --info depends:so:libc.musl-x86_64.so.1 \
