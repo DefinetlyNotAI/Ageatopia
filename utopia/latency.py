@@ -14,6 +14,9 @@ def parser():
     result.add_argument("--model", default=ModelSettings().model)
     result.add_argument("--base-url", default=ModelSettings().base_url)
     result.add_argument("--context-tokens", type=int, default=ModelSettings().context_tokens)
+    result.add_argument(
+        "--prompt-batch-tokens", type=int, default=ModelSettings().prompt_batch_tokens
+    )
     result.add_argument("--repeat", type=int, default=5)
     result.add_argument(
         "--cold",
@@ -36,6 +39,7 @@ async def run_benchmark(args):
         model=args.model,
         base_url=args.base_url,
         context_tokens=args.context_tokens,
+        prompt_batch_tokens=args.prompt_batch_tokens,
         temperature=0,
     )
     messages = [
@@ -80,6 +84,7 @@ async def run_benchmark(args):
             "model": settings.model,
             "base_url": settings.base_url,
             "context_tokens": settings.context_tokens,
+            "prompt_batch_tokens": settings.prompt_batch_tokens,
             "cold_unload_requested": args.cold,
             "warmup": warmup,
             "measurements": measurements,

@@ -34,6 +34,7 @@ class SharedInference:
     def _ollama_options(settings):
         options = {
             "num_ctx": settings.context_tokens,
+            "num_batch": settings.prompt_batch_tokens,
             "temperature": settings.temperature,
             "seed": settings.seed,
             "num_predict": settings.max_output_tokens,
@@ -262,7 +263,10 @@ class SharedInference:
     async def _embeddings(self, settings, texts):
         if settings.provider != "ollama":
             raise ValueError("Embeddings are supported only by Ollama")
-        options = {"num_ctx": settings.context_tokens}
+        options = {
+            "num_ctx": settings.context_tokens,
+            "num_batch": settings.prompt_batch_tokens,
+        }
         if settings.gpu_layers is not None:
             options["num_gpu"] = settings.gpu_layers
         response = await self.client.post(

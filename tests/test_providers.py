@@ -86,6 +86,7 @@ async def test_ollama_stream_assembles_content_thinking_tool_calls_and_timings()
         assert payload["keep_alive"] == -1
         assert payload["options"] == {
             "num_ctx": 2048,
+            "num_batch": 128,
             "temperature": 0.25,
             "seed": 7,
             "num_predict": 64,
@@ -96,6 +97,7 @@ async def test_ollama_stream_assembles_content_thinking_tool_calls_and_timings()
     provider = await mock_provider(handler)
     settings = ModelSettings(
         context_tokens=2048,
+        prompt_batch_tokens=128,
         temperature=0.25,
         seed=7,
         max_output_tokens=64,
@@ -148,6 +150,7 @@ async def test_warm_uses_empty_chat_and_returns_server_timings():
         assert payload["stream"] is False
         assert payload["keep_alive"] == "3m"
         assert payload["options"]["num_ctx"] == 4096
+        assert payload["options"]["num_batch"] == 256
         assert payload["options"]["num_gpu"] == 12
         return httpx.Response(
             200,
@@ -182,7 +185,7 @@ async def test_ollama_embeddings_batch_without_truncation():
         assert payload["input"] == texts
         assert payload["truncate"] is False
         assert payload["keep_alive"] == -1
-        assert payload["options"] == {"num_ctx": 4096}
+        assert payload["options"] == {"num_ctx": 4096, "num_batch": 256}
         return httpx.Response(200, json={"embeddings": [[0.1, 0.2], [0.3, 0.4]]})
 
     provider = await mock_provider(handler)

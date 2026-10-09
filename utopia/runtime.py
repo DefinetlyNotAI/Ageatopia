@@ -100,6 +100,7 @@ class Runtime:
                 settings.base_url,
                 settings.model,
                 settings.context_tokens,
+                settings.prompt_batch_tokens,
                 settings.gpu_layers,
                 settings.keep_alive,
             )

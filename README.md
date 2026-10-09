@@ -192,7 +192,10 @@ Ollama models are preloaded at their actual configured context size before simul
 time starts or resumes. `model.keep_alive` defaults to `-1`, requesting residency;
 Ollama still manages allocation when available memory cannot hold every model.
 Default GPU placement remains automatic; `gpu_layers` can explicitly control layers
-for a supported Ollama backend. Streamed inference records first output, model load,
+for a supported Ollama backend. `prompt_batch_tokens` defaults to 256 to bound prompt
+processing buffers; increase it only after measuring available memory and throughput.
+This setting is used consistently for preloading, chat and embedding requests.
+Streamed inference records first output, model load,
 prompt evaluation and generation timings. Measure this machine using:
 
 ```powershell
