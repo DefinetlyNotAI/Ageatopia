@@ -319,7 +319,12 @@ class Runtime:
             raise
         except Exception as error:
             self.engine.record("runtime.error", {"error": str(error)}, severity="error")
-            await self.stop("pause")
+            try:
+                await self.stop("pause")
+            except SandboxUnavailable as cleanup_error:
+                self.engine.record(
+                    "runtime.cleanup-error", {"error": str(cleanup_error)}, severity="error"
+                )
 
     async def infer(self, identity, messages, tools):
         engine = self.engine

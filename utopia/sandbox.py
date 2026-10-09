@@ -27,14 +27,17 @@ class DockerSandbox:
     async def _docker(self, *arguments, stdin=None, deadline_seconds=30):
         if not shutil.which("docker"):
             raise SandboxUnavailable("Docker is required. Host execution is disabled.")
-        process = await asyncio.create_subprocess_exec(
-            "docker",
-            *arguments,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "docker",
+                *arguments,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+        except OSError as error:
+            raise SandboxUnavailable(f"Docker could not start: {error}") from error
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(stdin), deadline_seconds)
         except (TimeoutError, asyncio.CancelledError):

@@ -306,3 +306,33 @@ def test_context_bound_includes_provider_thinking_and_tool_calls():
         SharedInference.context_bound(
             [{"role": "assistant", "content": "", "thinking": "x" * 10000}], [], ModelSettings()
         )
+
+
+async def test_docker_process_creation_failure_is_reported_as_unavailable(monkeypatch):
+    from utopia.config import ToolSettings
+
+    async def failed_start(*args, **kwargs):
+        raise OSError(1455, "The paging file is too small")
+
+    monkeypatch.setattr("utopia.sandbox.shutil.which", lambda _: "docker")
+    monkeypatch.setattr("utopia.sandbox.asyncio.create_subprocess_exec", failed_start)
+    with pytest.raises(SandboxUnavailable, match="paging file") as failure:
+        await DockerSandbox("resource-failure", ToolSettings())._docker("info")
+    assert isinstance(failure.value.__cause__, OSError)
+
+
+async def test_clock_records_cleanup_failure_after_resource_error(engine):
+    runtime, _ = runtime_with(engine, [])
+    engine.config.tick_ms = 1
+
+    async def unavailable(*args, **kwargs):
+        raise SandboxUnavailable("Docker cannot start: paging file exhausted")
+
+    runtime.observe = unavailable
+    runtime.sandbox.kill = unavailable
+    runtime.sandbox.stop = unavailable
+    await runtime.clock_loop()
+    assert engine.state["status"] == "PAUSED"
+    assert engine.store.event_page(engine.state["id"], kind="runtime.error")
+    records = engine.store.event_page(engine.state["id"], kind="runtime.cleanup-error")
+    assert len(records) == 1 and "paging file" in records[0]["payload"]["error"]
