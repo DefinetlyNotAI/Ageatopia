@@ -347,3 +347,26 @@ Ruff, dashboard typecheck/lint and production build passed. The actual C/Win32
 window rendered a labeled operator fixture showing `RELAX`, three correct tasks,
 28:00 remaining and the next +5:00 bonus. This fixture checks rendering and engine
 transitions; it does not claim autonomous live-model adoption or full acceptance.
+
+## Held-out submission-format evaluation
+
+Training supervises task submit calls, while the original held-out evaluation
+requested plain answers. `utopia.evaluate_adapter --mode submissions` now supplies
+the real tool definitions and asks for one mathematical task submit call. A strict
+parser rejects surrounding prose, multiple calls, non-task calls, non-submit
+operations and non-string answers. Only valid extracted answers reach the existing
+private grader. Raw generated outputs and format failures remain in the report.
+The original answer mode remains available. Submission mode supports checkpoint
+templates using `tool_call` tags and rejects unsupported templates before loading
+model weights; no generated tools execute and no adapter is activated.
+
+The saved two-example Qwen3-0.6B adapter was compared with its unchanged base on
+CUDA, seed 20261009, 12 held-out mathematical tasks, greedy decoding and a 256-token
+limit. Both scored 0/12; all 12 outputs from each model were malformed. Outputs
+included argument-only Python requests rather than complete task submit calls.
+The comparison took 34.436 s and is preserved in
+`.data/training-verification/held-out-submissions-summarized-1.json`. This establishes
+failure on the single-turn submission check, not on multi-step tool execution,
+cyber tasks or the full simulation. Standard tests passed 101 with three real-provider
+tests skipped; Ruff check/format and focused review passed. Learning improvement
+and full acceptance remain unresolved.

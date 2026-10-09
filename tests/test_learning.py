@@ -7,11 +7,30 @@ from sqlalchemy import delete, inspect
 from sqlalchemy.exc import IntegrityError
 
 from utopia.engine import Engine
-from utopia.evaluate_adapter import evaluation_tasks
+from utopia.evaluate_adapter import evaluation_tasks, submission_answer
 from utopia.runtime import Runtime
 from utopia.store import Store, events
 from utopia.tools import ToolExecutor
 from utopia.train import train, verified_sample, verified_submission_index
+
+
+def test_submission_evaluation_accepts_only_one_explicit_submit_call():
+    output = (
+        '<tool_call>{"name":"task","arguments":{"operation":"submit","answer":"7"}}</tool_call>'
+    )
+    assert submission_answer(output) == "7"
+    for invalid in (
+        "7",
+        "Here is the answer: " + output,
+        output + output,
+        output.replace('"submit"', '"request"'),
+        output.replace('"task"', '"workspace"'),
+        output.replace('"answer":"7"', '"answer":7'),
+        '<tool_call>{"name":"task","arguments":null}</tool_call>',
+        '<tool_call>{"name":"task","arguments":{"operation":"submit","answer":"7","code":"x"}}</tool_call>',
+    ):
+        with pytest.raises(ValueError):
+            submission_answer(invalid)
 
 
 def test_training_target_excludes_prior_errors_and_requires_one_verified_submission():

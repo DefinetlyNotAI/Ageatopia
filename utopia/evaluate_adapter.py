@@ -3,12 +3,32 @@
 import argparse
 import hashlib
 import json
+import re
 import time
 from pathlib import Path
 
 from utopia.config import WorldConfig
 from utopia.grader import GradeKind, Grader
 from utopia.tasks import generate_tasks, public_task
+from utopia.tools import TOOLS
+
+
+def submission_answer(output):
+    match = re.fullmatch(r"\s*<tool_call>\s*(.*?)\s*</tool_call>\s*", output, re.DOTALL)
+    if not match:
+        raise ValueError("Expected exactly one tool_call with no surrounding prose")
+    call = json.loads(match[1])
+    if not isinstance(call, dict) or set(call) != {"name", "arguments"} or call["name"] != "task":
+        raise ValueError("Expected a task tool call")
+    arguments = call["arguments"]
+    if (
+        not isinstance(arguments, dict)
+        or set(arguments) != {"operation", "answer"}
+        or arguments["operation"] != "submit"
+        or not isinstance(arguments["answer"], str)
+    ):
+        raise ValueError("Expected task submit with a string answer")
+    return arguments["answer"]
 
 
 def evaluation_tasks(adapter, training_data, model, seed, count):
@@ -79,6 +99,8 @@ def evaluate(args):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
+    if args.mode == "submissions" and "<tool_call>" not in tokenizer.get_chat_template(tools=TOOLS):
+        raise ValueError("Submission evaluation requires a chat template using tool_call tags")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     base = AutoModelForCausalLM.from_pretrained(
         args.model,
@@ -92,12 +114,22 @@ def evaluate(args):
         messages = [
             {
                 "role": "system",
-                "content": "Solve the problem. Return only the requested expression.",
+                "content": (
+                    "Solve the problem directly for this offline check. Return exactly one task "
+                    "tool call with operation=submit and the answer in its requested format. "
+                    "No other tools will execute."
+                    if args.mode == "submissions"
+                    else "Solve the problem. Return only the requested expression."
+                ),
             },
             {"role": "user", "content": public_task(task)["prompt"]},
         ]
         text = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+            **({"tools": TOOLS} if args.mode == "submissions" else {}),
         )
         inputs = tokenizer(text, return_tensors="pt").to(device)
         with torch.inference_mode():
@@ -107,9 +139,20 @@ def evaluate(args):
                 max_new_tokens=args.max_output_tokens,
                 pad_token_id=tokenizer.eos_token_id,
             )
-        answer = tokenizer.decode(
+        output = tokenizer.decode(
             tokens[0, inputs["input_ids"].shape[1] :], skip_special_tokens=True
         ).strip()
+        try:
+            answer = submission_answer(output) if args.mode == "submissions" else output
+        except ValueError as error:
+            return {
+                "task_id": task["id"],
+                "prompt": task["prompt"],
+                "output": output,
+                "answer": None,
+                "grade": GradeKind.MALFORMED,
+                "detail": str(error),
+            }
         grade = grader.grade(task, answer)
         if grade.kind == GradeKind.INFRASTRUCTURE:
             raise RuntimeError(f"Grading failed for {task['id']}: {grade.detail}")
@@ -117,6 +160,7 @@ def evaluate(args):
             "task_id": task["id"],
             "prompt": task["prompt"],
             "answer": answer,
+            "output": output,
             "grade": grade.kind,
         }
 
@@ -136,7 +180,13 @@ def evaluate(args):
         "training_dataset_version": manifest["dataset_version"],
         "seed": args.seed,
         "task_count": len(tasks),
-        "scope": "held-out math answers; no tools, cyber tasks or full simulation",
+        "mode": args.mode,
+        "scope": (
+            "held-out single-turn math submissions; "
+            "no tool execution, cyber tasks or full simulation"
+            if args.mode == "submissions"
+            else "held-out math answers; no tools, cyber tasks or full simulation"
+        ),
         "decoding": {"do_sample": False, "max_output_tokens": args.max_output_tokens},
         "device": device,
         "evaluation_seconds": round(time.perf_counter() - started, 3),
@@ -160,6 +210,7 @@ def main():
     parser.add_argument("--seed", type=int, default=20261009)
     parser.add_argument("--count", type=int, default=12)
     parser.add_argument("--max-output-tokens", type=int, default=128)
+    parser.add_argument("--mode", choices=["answers", "submissions"], default="answers")
     args = parser.parse_args()
     if not 1 <= args.max_output_tokens <= 1024:
         parser.error("max-output-tokens must be between 1 and 1024")

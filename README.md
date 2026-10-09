@@ -293,6 +293,11 @@ same deterministic decoding for both models, and grades generated answers withou
 putting private validators into model context. Existing reports are preserved.
 This evaluates mathematical answers; tool use, cyber tasks and full simulation
 performance still need separate validation. Evaluation never activates an adapter.
+Use `--mode submissions --max-output-tokens 256` for a separate single-turn
+mathematical submission check with the real tool definitions. This mode requires
+a checkpoint chat template using `<tool_call>` tags. It grades only an explicit
+`task` submit call, preserves malformed raw outputs, and executes no generated
+tools. It does not replace full simulation validation.
 `GET /comparison` compares model/context outcomes across runs. For real provider
 benchmarks, run `python -m utopia.benchmark --models qwen3.5:2b qwen3.5:0.8b`.
 
