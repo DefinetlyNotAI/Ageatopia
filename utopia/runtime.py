@@ -577,7 +577,6 @@ class Runtime:
                     if engine.agent(identity)["state"] == "TERMINATED":
                         await self.sandbox.kill(identity)
                         return
-                    await self.observe()
                     engine.conversation(
                         identity,
                         {
@@ -589,6 +588,7 @@ class Runtime:
                     )
                     with engine.transaction():
                         agent["pending_tools"] = agent["pending_tools"][1:]
+                    await self.observe()
         except asyncio.CancelledError:
             if self.sandbox.available:
                 await self.sandbox.kill(identity)

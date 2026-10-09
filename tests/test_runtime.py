@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from utopia.config import ModelSettings
+from utopia.engine import Engine
 from utopia.exports import public_trajectories
 from utopia.providers import ContextOverflow, InferenceResult, SharedInference
 from utopia.runtime import Runtime
@@ -99,6 +100,30 @@ async def test_autonomous_tool_loop_requests_and_solves_real_engine_task(engine)
         set(message) <= {"role", "content", "tool_calls", "name", "tool_call_id"}
         for message in rows[0]["messages"]
     )
+
+
+async def test_observer_cancellation_preserves_completed_tool_result_and_training_target(engine):
+    identity = next(iter(engine.state["agents"]))
+    engine.request_task(identity)
+    answer = engine.state["tasks"][0]["answer"]
+    runtime, _ = runtime_with(engine, [call("submit", answer)])
+
+    async def interrupted_observer():
+        raise asyncio.CancelledError
+
+    runtime.observe = interrupted_observer
+    with pytest.raises(asyncio.CancelledError):
+        await runtime.agent_loop(identity)
+    restored = Engine(engine.store, engine.store.load(engine.state["id"]))
+    restored.recover()
+    agent = restored.agent(identity)
+    assert agent["pending_tools"] == []
+    assert agent["history"][-1]["role"] == "tool"
+    assert agent["history"][-1]["tool_call_id"] == "call-submit"
+    assert '"status": "Verified"' in agent["history"][-1]["content"]
+    rows = public_trajectories(engine.store, restored.state)
+    assert len(rows) == 1
+    assert rows[0]["messages"][-1] == agent["history"][-1]
 
 
 async def test_answer_on_request_is_rejected_with_submission_guidance(engine):

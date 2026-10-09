@@ -467,3 +467,24 @@ Verification passed 105 standard tests with three integration tests deselected,
 the real acceptance test, and Ruff check/format. Focused review found no actionable
 issues. Reliable held-out weight-learning improvement remains unproven; no adapter
 was activated.
+
+## Preserve completed results across observer cancellation
+
+The passing live acceptance run retained its verified task ledger and `tool.result`
+event but exported zero training rows. Its worker was cancelled during the
+workspace-observation await before the returned tool message reached conversation
+history. Recovery consequently substituted an interruption message for an action
+that had already completed. The isolated successful submission was present; this
+was a persistence-order issue, not a mixed-call exclusion.
+
+The runtime now saves the returned tool message and removes its pending call before
+awaiting observation. The terminated-agent check remains before persistence. A
+regression reproduces cancellation after a real engine-verified submission, then
+reloads and recovers the saved state. It retains the actual `Verified` result, has
+no pending call and exports one public training target. Original evidence is
+preserved; no missing historic conversation message was fabricated.
+
+Verification passed 106 standard tests with three integration tests deselected,
+Ruff check/format and focused review. The previously recorded live acceptance pass
+remains evidence for that run; this cancellation fix was checked by its focused
+reproduction and the standard suite.
