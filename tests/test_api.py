@@ -1,4 +1,6 @@
 import base64
+import csv
+import io
 import json
 from pathlib import Path
 
@@ -83,6 +85,16 @@ def test_run_presets_replay_repeat_and_economy_versioning(tmp_path):
         assert repeated["id"] != identity and len(repeated["agents"]) == 6
         exported = client.get(f"/runs/{identity}/export/json", headers=HEADERS)
         assert json.loads(exported.content)["run"]["config"]["seed"] == 42
+        exported_csv = client.get(f"/runs/{identity}/export/csv", headers=HEADERS)
+        csv_records = list(csv.DictReader(io.StringIO(exported_csv.content.decode("utf-8-sig"))))
+        assert len(csv_records) == len(exported.json()["events"])
+        assert json.loads(csv_records[0]["payload"]) == exported.json()["events"][0]["payload"]
+        import pyarrow.parquet as pq
+
+        exported_parquet = client.get(f"/runs/{identity}/export/parquet", headers=HEADERS)
+        table = pq.read_table(io.BytesIO(exported_parquet.content))
+        assert table.num_rows == len(csv_records)
+        assert table["sequence"].to_pylist() == [int(row["sequence"]) for row in csv_records]
         assert client.get(f"/runs/{identity}/analytics", headers=HEADERS).status_code == 200
         assert client.get("/comparison", headers=HEADERS).status_code == 200
         assert client.get(f"/runs/{identity}/training-data", headers=HEADERS).text == ""

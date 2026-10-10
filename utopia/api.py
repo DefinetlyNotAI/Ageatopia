@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from utopia.config import Economy, WorldConfig
 from utopia.engine import Engine
-from utopia.exports import all_events, comparison, export_run, public_trajectories
+from utopia.exports import all_events, comparison, export_chunks, public_trajectories
 from utopia.providers import SharedInference
 from utopia.runtime import Runtime
 from utopia.sandbox import DockerSandbox, SandboxUnavailable
@@ -411,11 +411,15 @@ def create_app(directory=None, store=None, token=None):
     @app.get("/runs/{run_id}/export/{format}", dependencies=protected)
     async def export(run_id: str, format: str):
         engine = lookup(run_id)
-        payload, content_type = await asyncio.to_thread(
-            export_run, database, copy.deepcopy(engine.state), format
-        )
-        return Response(
-            payload,
+        content_type = {
+            "json": "application/json",
+            "csv": "text/csv",
+            "parquet": "application/vnd.apache.parquet",
+        }.get(format)
+        if content_type is None:
+            raise ValueError("Format must be json, csv or parquet")
+        return StreamingResponse(
+            export_chunks(database, copy.deepcopy(engine.state), format, directory),
             media_type=content_type,
             headers={"Content-Disposition": f'attachment; filename="utopia-{run_id}.{format}"'},
         )
