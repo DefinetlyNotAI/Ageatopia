@@ -80,11 +80,24 @@ typedef struct NavigationCompletedHandler {
     App *app;
 } NavigationCompletedHandler;
 
+typedef struct HistoryChangedHandler {
+    ICoreWebView2HistoryChangedEventHandler iface;
+    LONG refCount;
+    App *app;
+} HistoryChangedHandler;
+
 typedef struct DownloadStartingHandler {
     ICoreWebView2DownloadStartingEventHandler iface;
     LONG refCount;
     App *app;
 } DownloadStartingHandler;
+
+typedef struct DownloadStateChangedHandler {
+    ICoreWebView2StateChangedEventHandler iface;
+    LONG refCount;
+    App *app;
+    EventRegistrationToken token;
+} DownloadStateChangedHandler;
 
 typedef struct AcceleratorKeyPressedHandler {
     ICoreWebView2AcceleratorKeyPressedEventHandler iface;
@@ -136,10 +149,18 @@ static HRESULT STDMETHODCALLTYPE NavigationCompletedInvoke(
     ICoreWebView2NavigationCompletedEventHandler *This,
     ICoreWebView2 *sender,
     ICoreWebView2NavigationCompletedEventArgs *args);
+static HRESULT STDMETHODCALLTYPE HistoryChangedInvoke(
+    ICoreWebView2HistoryChangedEventHandler *This,
+    ICoreWebView2 *sender,
+    IUnknown *args);
 static HRESULT STDMETHODCALLTYPE DownloadStartingInvoke(
     ICoreWebView2DownloadStartingEventHandler *This,
     ICoreWebView2 *sender,
     ICoreWebView2DownloadStartingEventArgs *args);
+static HRESULT STDMETHODCALLTYPE DownloadStateChangedInvoke(
+    ICoreWebView2StateChangedEventHandler *This,
+    ICoreWebView2DownloadOperation *sender,
+    IUnknown *args);
 static HRESULT STDMETHODCALLTYPE AcceleratorKeyPressedInvoke(
     ICoreWebView2AcceleratorKeyPressedEventHandler *This,
     ICoreWebView2Controller *sender,
@@ -202,10 +223,20 @@ DEFINE_HANDLER_IDENTITY(
     ICoreWebView2NavigationCompletedEventHandler,
     IID_ICoreWebView2NavigationCompletedEventHandler)
 DEFINE_HANDLER_IDENTITY(
+    HistoryChangedHandler_,
+    HistoryChangedHandler,
+    ICoreWebView2HistoryChangedEventHandler,
+    IID_ICoreWebView2HistoryChangedEventHandler)
+DEFINE_HANDLER_IDENTITY(
     DownloadStartingHandler_,
     DownloadStartingHandler,
     ICoreWebView2DownloadStartingEventHandler,
     IID_ICoreWebView2DownloadStartingEventHandler)
+DEFINE_HANDLER_IDENTITY(
+    DownloadStateChangedHandler_,
+    DownloadStateChangedHandler,
+    ICoreWebView2StateChangedEventHandler,
+    IID_ICoreWebView2StateChangedEventHandler)
 DEFINE_HANDLER_IDENTITY(
     AcceleratorKeyPressedHandler_,
     AcceleratorKeyPressedHandler,
@@ -245,11 +276,23 @@ static ICoreWebView2NavigationCompletedEventHandlerVtbl
         NavigationCompletedHandler_Release,
         NavigationCompletedInvoke};
 
+static ICoreWebView2HistoryChangedEventHandlerVtbl HISTORY_CHANGED_HANDLER_VTBL = {
+    HistoryChangedHandler_QueryInterface,
+    HistoryChangedHandler_AddRef,
+    HistoryChangedHandler_Release,
+    HistoryChangedInvoke};
+
 static ICoreWebView2DownloadStartingEventHandlerVtbl DOWNLOAD_STARTING_HANDLER_VTBL = {
     DownloadStartingHandler_QueryInterface,
     DownloadStartingHandler_AddRef,
     DownloadStartingHandler_Release,
     DownloadStartingInvoke};
+
+static ICoreWebView2StateChangedEventHandlerVtbl DOWNLOAD_STATE_CHANGED_HANDLER_VTBL = {
+    DownloadStateChangedHandler_QueryInterface,
+    DownloadStateChangedHandler_AddRef,
+    DownloadStateChangedHandler_Release,
+    DownloadStateChangedInvoke};
 
 static ICoreWebView2AcceleratorKeyPressedEventHandlerVtbl ACCELERATOR_KEY_PRESSED_HANDLER_VTBL = {
     AcceleratorKeyPressedHandler_QueryInterface,
@@ -660,6 +703,18 @@ static NavigationCompletedHandler *CreateNavigationCompletedHandler(App *app)
     return handler;
 }
 
+static HistoryChangedHandler *CreateHistoryChangedHandler(App *app)
+{
+    HistoryChangedHandler *handler = (HistoryChangedHandler *)HeapAlloc(
+        GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*handler));
+    if (handler != NULL) {
+        handler->iface.lpVtbl = &HISTORY_CHANGED_HANDLER_VTBL;
+        handler->refCount = 1;
+        handler->app = app;
+    }
+    return handler;
+}
+
 static DownloadStartingHandler *CreateDownloadStartingHandler(App *app)
 {
     DownloadStartingHandler *handler = (DownloadStartingHandler *)HeapAlloc(
@@ -670,6 +725,46 @@ static DownloadStartingHandler *CreateDownloadStartingHandler(App *app)
         handler->app = app;
     }
     return handler;
+}
+
+static DownloadStateChangedHandler *CreateDownloadStateChangedHandler(App *app)
+{
+    DownloadStateChangedHandler *handler = (DownloadStateChangedHandler *)HeapAlloc(
+        GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*handler));
+    if (handler != NULL) {
+        handler->iface.lpVtbl = &DOWNLOAD_STATE_CHANGED_HANDLER_VTBL;
+        handler->refCount = 1;
+        handler->app = app;
+    }
+    return handler;
+}
+
+static HRESULT RegisterDownloadStateChangedHandler(
+    App *app,
+    ICoreWebView2DownloadStartingEventArgs *args)
+{
+    ICoreWebView2DownloadOperation *operation = NULL;
+    DownloadStateChangedHandler *handler;
+    HRESULT hr = ICoreWebView2DownloadStartingEventArgs_get_DownloadOperation(
+        args, &operation);
+
+    if (FAILED(hr) || operation == NULL) {
+        if (operation != NULL) {
+            ICoreWebView2DownloadOperation_Release(operation);
+        }
+        return FAILED(hr) ? hr : E_FAIL;
+    }
+    handler = CreateDownloadStateChangedHandler(app);
+    if (handler == NULL) {
+        ICoreWebView2DownloadOperation_Release(operation);
+        return E_OUTOFMEMORY;
+    }
+
+    hr = ICoreWebView2DownloadOperation_add_StateChanged(
+        operation, &handler->iface, &handler->token);
+    ICoreWebView2StateChangedEventHandler_Release(&handler->iface);
+    ICoreWebView2DownloadOperation_Release(operation);
+    return hr;
 }
 
 static AcceleratorKeyPressedHandler *CreateAcceleratorKeyPressedHandler(App *app)
@@ -743,6 +838,17 @@ static HRESULT RegisterNavigationHandlers(App *app)
     hr = ICoreWebView2_add_NavigationCompleted(
         app->webview, &completed->iface, &token);
     ICoreWebView2NavigationCompletedEventHandler_Release(&completed->iface);
+    if (FAILED(hr)) {
+        return hr;
+    }
+
+    HistoryChangedHandler *historyChanged = CreateHistoryChangedHandler(app);
+    if (historyChanged == NULL) {
+        return E_OUTOFMEMORY;
+    }
+    hr = ICoreWebView2_add_HistoryChanged(
+        app->webview, &historyChanged->iface, &token);
+    ICoreWebView2HistoryChangedEventHandler_Release(&historyChanged->iface);
     if (FAILED(hr)) {
         return hr;
     }
@@ -976,6 +1082,22 @@ static HRESULT STDMETHODCALLTYPE NavigationCompletedInvoke(
     return S_OK;
 }
 
+static HRESULT STDMETHODCALLTYPE HistoryChangedInvoke(
+    ICoreWebView2HistoryChangedEventHandler *This,
+    ICoreWebView2 *sender,
+    IUnknown *args)
+{
+    HistoryChangedHandler *handler = (HistoryChangedHandler *)This;
+    App *app = handler->app;
+
+    UNREFERENCED_PARAMETER(sender);
+    UNREFERENCED_PARAMETER(args);
+    if (app->window != NULL) {
+        UpdateNavigationControls(app->window);
+    }
+    return S_OK;
+}
+
 static HRESULT STDMETHODCALLTYPE DownloadStartingInvoke(
     ICoreWebView2DownloadStartingEventHandler *This,
     ICoreWebView2 *sender,
@@ -1048,6 +1170,45 @@ static HRESULT STDMETHODCALLTYPE DownloadStartingInvoke(
     }
 
     SetStatus(app, L"Saving export. The observatory remains open.");
+    hr = RegisterDownloadStateChangedHandler(app, args);
+    if (FAILED(hr)) {
+        SetStatus(app, L"Export started, but completion could not be monitored.");
+    }
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE DownloadStateChangedInvoke(
+    ICoreWebView2StateChangedEventHandler *This,
+    ICoreWebView2DownloadOperation *sender,
+    IUnknown *args)
+{
+    DownloadStateChangedHandler *handler = (DownloadStateChangedHandler *)This;
+    COREWEBVIEW2_DOWNLOAD_STATE state;
+    COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON interruptReason;
+    HRESULT hr;
+
+    UNREFERENCED_PARAMETER(args);
+    hr = ICoreWebView2DownloadOperation_get_State(sender, &state);
+    if (FAILED(hr)) {
+        SetStatus(handler->app, L"Export failed. Use Reload or Home to continue.");
+        ICoreWebView2DownloadOperation_remove_StateChanged(sender, handler->token);
+        return hr;
+    }
+    if (state == COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS) {
+        return hr;
+    }
+
+    if (state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED) {
+        SetStatus(handler->app, L"Export saved. The observatory remains open.");
+    } else if (SUCCEEDED(ICoreWebView2DownloadOperation_get_InterruptReason(
+                   sender, &interruptReason)) &&
+        interruptReason == COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_CANCELED) {
+        SetStatus(handler->app, L"Export canceled. The observatory remains open.");
+    } else {
+        SetStatus(handler->app, L"Export failed. Use Reload or Home to continue.");
+    }
+
+    ICoreWebView2DownloadOperation_remove_StateChanged(sender, handler->token);
     return S_OK;
 }
 
