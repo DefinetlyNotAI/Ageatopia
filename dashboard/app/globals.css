@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./sandbox-room.css";
 
 :root { --bg:#f3f4ef; --paper:#fff; --ink:#222e2a; --muted:#66716b; --line:#dbe0d8; --accent:#25654b; --amber:#a87421; --danger:#a33c35; }
 * { box-sizing:border-box; }

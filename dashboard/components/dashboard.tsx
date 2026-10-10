@@ -6,6 +6,7 @@ import { Bars, Trend } from "./charts";
 import { Inspector } from "./inspector";
 import { AgentEntityLink, TaskEntityLink } from "./entity-links";
 import { MarkdownContent } from "./markdown-content";
+import { SandboxRoom } from "./sandbox-room";
 
 type Analytics = {
   population: [number, number][]; completions: [number, number][]; skips: [number, number][];
@@ -13,7 +14,7 @@ type Analytics = {
   rewards_ms: number[]; lifespans: { id: string; name: string; start: number; end: number }[];
   artifact_evidence: { path: string; agent_id: string; modification_sequence: number; tool_sequence: number; interpretation: string }[];
 };
-const TABS = ["Overview", "Tasks", "Activity", "Agents", "Analysis", "Replay"] as const;
+const TABS = ["Overview", "Tasks", "Activity", "Agents", "Analysis", "Replay", "Sandbox room"] as const;
 type Tab = typeof TABS[number];
 type DashboardNavigation = { run?: string; tab?: string; task?: string; agent?: string };
 
@@ -144,7 +145,7 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
   useEffect(() => {
     function handleShortcut(event: globalThis.KeyboardEvent) {
       if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || !run) return;
-      if (!/^[1-6]$/.test(event.key)) return;
+      if (!/^[1-7]$/.test(event.key)) return;
       const target = event.target as HTMLElement;
       if (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
       event.preventDefault();
@@ -244,8 +245,11 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
       <span className="eyebrow">LOCAL RESEARCH</span><h1>Worlds</h1>
       <button className="primary" onClick={() => { if (!showSetup && system) setConfig(system.defaults); setShowSetup(value => !value); }}>+ Create world</button>
       <div className="world-list">{runs.map(world => <button key={world.id} className={selected === world.id ? "selected" : ""}
-        onClick={() => { setRun(null); setEvents([]); setAnalytics(null); setSelectedTask(""); setSelected(world.id); setShowSetup(false); setReplayTime(0); setPlaying(false); }}>
+        onClick={() => { if (selected === world.id) { setShowSetup(false); return; }
+          setRun(null); setEvents([]); setAnalytics(null); setSelectedTask(""); setSelected(world.id); setShowSetup(false); setReplayTime(0); setPlaying(false); }}>
         <strong>{world.name}</strong><span>{world.status.toLowerCase()} · {duration(world.sim_ms)}</span></button>)}</div>
+      <button className={`room-nav ${tab === "Sandbox room" && !showSetup ? "selected" : ""}`} disabled={!selected}
+        onClick={() => { setTab("Sandbox room"); setShowSetup(false); }}>Sandbox room <span>Models & tool calls</span></button>
       <div className="system-status"><h3>Infrastructure</h3>{!system ? <p>Checking local services…</p> : <><p><i className={system.docker_ready ? "online" : ""} />Docker {system.docker_ready ? "ready" : system.docker_installed ? "engine unavailable" : "not installed"}</p>
         {system?.docker_error && <small>{system.docker_error}</small>}
         <p><i className={system?.models.length ? "online" : ""} />Ollama {system?.models.length ? "connected" : "unavailable"}</p>
@@ -279,6 +283,7 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
           id={`run-tab-${index}`} type="button" role="tab" aria-selected={tab === value} aria-controls="run-tab-panel" tabIndex={tab === value ? 0 : -1}
           title={`Keyboard shortcut: Alt+${index + 1}`} className={tab === value ? "active" : ""} onClick={() => setTab(value)}>{value}</button>)}</nav>
         <div id="run-tab-panel" role="tabpanel" tabIndex={0} aria-labelledby={`run-tab-${TABS.indexOf(tab)}`}>
+        {tab === "Sandbox room" && <SandboxRoom key={run.id} run={run} events={events} connected={connected} inspectAgent={inspectAgent} selectTask={selectTask} />}
         {tab === "Overview" && <>
           <div className="stats"><Stat label="Living agents" value={living.length} detail={`${run.agents.length-living.length} terminated · ${run.respawns.length} awaiting replacement`} />
             <Stat label="Available tasks" value={run.tasks.filter(t => t.status === "AVAILABLE").length} detail={`${completed} completed · ${failed} failed`} />

@@ -220,6 +220,29 @@ def create_app(directory=None, store=None, token=None):
                 "model_manifest": engine.state["model_manifest"],
             }
 
+    @app.get("/runs/{run_id}/room", dependencies=protected)
+    async def get_room(run_id: str):
+        engine = lookup(run_id)
+        with engine.lock:
+            runtime = runtimes.get(run_id)
+            return {
+                "sim_ms": engine.state["sim_ms"],
+                "sandbox_available": bool(runtime and runtime.sandbox.available),
+                "image": engine.config.tools.image,
+                "limits": engine.config.tools.model_dump(mode="json"),
+                "files": [
+                    {
+                        "path": name,
+                        **{
+                            key: item[key]
+                            for key in ("size", "mode", "sha256", "symlink")
+                            if key in item
+                        },
+                    }
+                    for name, item in sorted(engine.state["workspace"].items())
+                ],
+            }
+
     @app.get("/runs/{run_id}/agents/{identity}", dependencies=protected)
     async def get_agent(run_id: str, identity: str):
         agent = lookup(run_id).agent(identity)

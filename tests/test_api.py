@@ -12,6 +12,28 @@ from utopia.api import create_app
 HEADERS = {"Authorization": "Bearer test-operator"}
 
 
+def test_room_metadata_is_protected_and_excludes_file_contents(tmp_path):
+    app = create_app(tmp_path, token="test-operator")
+    with TestClient(app) as client:
+        world = client.post("/runs", headers=HEADERS, json={}).json()
+        engine = app.state.engines[world["id"]]
+        with engine.transaction():
+            engine.state["workspace"] = {
+                "notes/a.txt": {"data": "c2VjcmV0", "size": 6, "mode": 420, "sha256": "digest"},
+                "link": {"symlink": "notes/a.txt"},
+            }
+        path = f"/runs/{world['id']}/room"
+        assert client.get(path).status_code == 401
+        metadata = client.get(path, headers=HEADERS).json()
+        assert not metadata["sandbox_available"]
+        assert metadata["files"] == [
+            {"path": "link", "symlink": "notes/a.txt"},
+            {"path": "notes/a.txt", "size": 6, "mode": 420, "sha256": "digest"},
+        ]
+        assert metadata["limits"]["workspace_mb"] == engine.config.tools.workspace_mb
+        assert client.get("/runs/missing/room", headers=HEADERS).status_code == 404
+
+
 def test_live_snapshot_cursor_skips_historical_checkpoints_and_activity_is_recent(tmp_path):
     from utopia.config import WorldConfig
     from utopia.engine import Engine
