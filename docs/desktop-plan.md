@@ -40,8 +40,11 @@ GPU adapter training, continuation and bounded inference host-cache configuratio
 are verified. The earlier Qwen3 adapter gained one held-out answer over its base
 on each of two task seeds. Corrected Qwen3.5 BF16 continuation subsequently gained
 three and one correct submissions on two twelve-task seeds, versus zero for its
-base. Overall accuracy remains low, and these offline gains do not prove live benefit.
+base. Overall accuracy remains low. A subsequent deployed Qwen3.5 paired
+five-minute, six-agent benchmark produced six correct tasks versus four for the
+base, with four incorrect tasks each. This single-seed result is a limited live
+benefit and does not justify automatic activation.
 Live Explorer access is verified with a quota-limited Docker tmpfs volume.
 Full live acceptance passed after correcting workspace-write validation and adding
-failed-action guidance. Adapter effectiveness in the live simulation remains unproven;
-see desktop-evidence.md. The overall goal is not marked complete.
+failed-action guidance. See desktop-evidence.md for the retained training,
+deployment and live comparison evidence. The overall goal is not marked complete.

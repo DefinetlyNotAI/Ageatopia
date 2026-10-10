@@ -781,3 +781,63 @@ Both runs terminated successfully and GPU allocation returned to zero. Applicati
 source was unchanged in this verification slice; the existing 116-test standard
 verification from the preceding training fix remains applicable. Documentation diff
 checks passed; the parent, child, lineage proof and original reports are retained.
+
+## Qwen3.5 deployed continuation
+
+The same pinned llama.cpp revision d81235049384534c167caea52b85a694f6103d14
+converted the actual Qwen3.5 base and its continued BF16-trained adapter. The
+converter handled the hybrid attention projections and exported all 372 adapter
+tensors. The native merge tool applied rank-8, alpha-16 updates with scale 2 to
+186 base tensors and wrote 335 tensors. Both base and merged F16 GGUF files are
+3,897,387,520 bytes; the adapter GGUF is 16,845,376 bytes.
+
+| Artifact | SHA256 |
+| --- | --- |
+| Base F16 GGUF | 9cb69478318a6c090f50b0b91bf52329f3f21d01d1803adb18be3d7ff2402ee7 |
+| Adapter GGUF | f41eff659f112225dea5c652d30b863d33947a344baf9fbf84232ddecbb78439 |
+| Merged F16 GGUF | 2fbd506e3c5599a82c1eeaf0a4b821edfa58f5ba001b4c40aa92ebe392955d96 |
+
+Ollama 0.40.1 imported separate ageatopia-qwen35-base-verification:latest and
+ageatopia-qwen35-continued-verification:latest tags, reporting qwen35 F16, 1.9B,
+tools/thinking/completion capabilities. Their digests are respectively
+1ffcde268de4f02cf3ee143eca426515acbdaddacd8f25704926a6b43be15b1d and
+410944b7fb127fbc640f237248662cb376aece6c41227b5aa74333e58ecd84d9.
+These imports do not change application defaults or existing worlds.
+
+A real shared-client/tool-schema smoke check preloaded the candidate in 4,972 ms.
+Its first 1,289-token prompt took 4,999 ms (prompt evaluation 4,277 ms, load 20 ms),
+and the identical cached repeat 754 ms (prompt evaluation 46 ms, load 22 ms).
+Both returned one parsed tool call. This separates cold prompt computation from
+model loading; it is not a general uncached throughput claim. Ollama reported
+3,913,044,458 total bytes and the same GPU bytes, context 8192 and indefinite
+residency. Deployment hashes, tag metadata and timing reports are preserved under
+.data/training-verification.
+
+The deployed base and continued candidate then ran sequentially for five minutes
+each through the real six-agent Docker/Ollama benchmark, seed 20261010, with the
+same forty tasks and default inference settings. Both exited successfully.
+
+| Measurement | Base | Continued candidate |
+| --- | ---: | ---: |
+| Simulation milliseconds | 300828 | 300618 |
+| Correct tasks | 4 | 6 |
+| Incorrect tasks | 4 | 4 |
+| Completed inference calls | 151 | 124 |
+| Notebook writes | 9 | 10 |
+| Agents with retained notebook entries | 5 | 5 |
+| Informational events | 5095 | 4252 |
+
+Neither run recorded warning/error events. The candidate mathematician reached
+three correct tasks and received exactly 300000 additional milliseconds at
+simulation millisecond 75583, recorded as three-task-bonus in its durable lifetime
+ledger. Fresh read-only database reads matched both complete exported run states.
+The result demonstrates a limited live benefit in this paired run; it does not
+establish a reliable gain across seeds or justify automatic model activation.
+
+Reports, exports, database, outcome-verification.json and both actual GPU placement
+snapshots remain under .data/benchmarks/qwen35-deployed-continuation-pair. Both
+models occupied 3913044458 GPU bytes during their respective runs. No Docker
+containers remained after shutdown; explicit unloading of only the two benchmark
+tags left Ollama's loaded-model list empty. The existing RELAX and recurring bonus
+regression checks passed again (four targeted engine/runtime tests); application
+source was unchanged.
