@@ -1,3 +1,4 @@
+import io
 import json
 import sys
 from types import SimpleNamespace
@@ -7,8 +8,47 @@ import pytest
 from textual.widgets import Button, Label, LoadingIndicator, RichLog, TextArea
 
 from utopia.control import ControlApp
-from utopia.desktop import ProcessSupervisor, validate_config
+from utopia.desktop import LauncherMonitor, ProcessSupervisor, validate_config
 from utopia.maintenance import MaintenanceApp
+
+
+def test_launcher_streams_new_service_errors_and_world_events(tmp_path, monkeypatch):
+    from rich.console import Console
+
+    output = io.StringIO()
+    supervisor = ProcessSupervisor(validate_config({"data_dir": str(tmp_path)}))
+    monitor = LauncherMonitor(supervisor, Console(file=output, width=200))
+    world = {"id": "world-id", "name": "Test world", "status": "RUNNING"}
+    requests = []
+
+    def request(method, path, **kwargs):
+        requests.append((path, kwargs))
+        if path == "/runs":
+            return [world]
+        if path == "/runs/world-id":
+            return {"event_cursor": 42}
+        return [
+            {
+                "sequence": 43,
+                "kind": "runtime.recovery-started",
+                "severity": "warning",
+                "payload": {"error": "Docker host memory exhausted"},
+            }
+        ]
+
+    monkeypatch.setattr(
+        "utopia.desktop.OperatorApi", lambda config: SimpleNamespace(request=request)
+    )
+    monitor.poll()
+    (tmp_path / "logs" / "backend.log").write_text(
+        "normal tool activity\nERROR: service connection failed\n", encoding="utf-8"
+    )
+    monitor.poll()
+    assert "normal tool activity" not in output.getvalue()
+    assert "service connection failed" in output.getvalue()
+    assert "Docker host memory exhausted" in output.getvalue()
+    assert requests[-1][1]["params"] == {"after": 42, "operator": "true"}
+    assert monitor.cursors["world-id"] == 43
 
 
 async def test_maintenance_command_palette_and_exit(tmp_path):
@@ -22,6 +62,37 @@ async def test_maintenance_command_palette_and_exit(tmp_path):
         await pilot.press("escape")
         app._write("Successfully installed example [literal]")
         app.query_one("#model-name").focus()
+        await pilot.press("ctrl+c")
+        assert app._exit
+
+
+async def test_maintenance_restores_and_persists_theme(tmp_path):
+    path = tmp_path / "desktop.json"
+    path.write_text(
+        json.dumps({"data_dir": str(tmp_path), "maintenance_theme": "textual-light"}),
+        encoding="utf-8",
+    )
+    app = MaintenanceApp(path)
+    async with app.run_test() as pilot:
+        assert app.theme == "textual-light"
+        app.theme = "textual-dark"
+        await pilot.pause()
+        assert json.loads(path.read_text(encoding="utf-8"))["maintenance_theme"] == "textual-dark"
+
+
+async def test_maintenance_ctrl_c_copies_selected_output_without_exiting(tmp_path):
+    path = tmp_path / "desktop.json"
+    path.write_text(json.dumps({"data_dir": str(tmp_path)}), encoding="utf-8")
+    app = MaintenanceApp(path)
+    async with app.run_test() as pilot:
+        app._write("copyable output")
+        log = app.query_one("#maintenance-log", RichLog)
+        app.screen._select_all_in_widget(log)
+        assert app.screen.get_selected_text() == "copyable output"
+        await pilot.press("ctrl+c")
+        assert app.clipboard == "copyable output"
+        assert not app._exit
+        app.screen.clear_selection()
         await pilot.press("ctrl+c")
         assert app._exit
 

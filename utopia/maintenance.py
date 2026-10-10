@@ -1,5 +1,6 @@
 """Textual installation, repair, and system diagnostics console."""
 
+import json
 import logging
 import os
 import shutil
@@ -13,10 +14,44 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.selection import Selection
+from textual.strip import Strip
 from textual.widgets import Button, Footer, Header, Input, Label, LoadingIndicator, RichLog, Static
 from textual.worker import Worker, WorkerState
 
 from utopia.desktop import DEFAULT_CONFIG, ROOT, load_config, setup_logging
+
+
+class SelectableRichLog(RichLog):
+    def get_selection(self, selection: Selection):
+        return selection.extract("\n".join(line.text.rstrip() for line in self.lines)), "\n"
+
+    def selection_updated(self, selection):
+        self.refresh()
+
+    def render_line(self, y):
+        scroll_x, scroll_y = self.scroll_offset
+        row = scroll_y + y
+        if row >= len(self.lines):
+            return super().render_line(y)
+        line = self.lines[row]
+        selection = self.text_selection
+        if selection is not None and (span := selection.get_span(row)) is not None:
+            text = Text.assemble(*[(segment.text, segment.style or "") for segment in line])
+            start, end = span
+            text.stylize(
+                self.screen.get_component_rich_style("screen--selection"),
+                start,
+                len(text) if end == -1 else end,
+            )
+            line = Strip(text.render(self.app.console))
+        return (
+            line.crop_extend(
+                scroll_x, scroll_x + self.scrollable_content_region.width, self.rich_style
+            )
+            .apply_style(self.rich_style)
+            .apply_offsets(scroll_x, row)
+        )
 
 
 class MaintenanceApp(App):
@@ -39,13 +74,19 @@ class MaintenanceApp(App):
     #maintenance-log { height: 1fr; border: round $primary-darken-2; }
     """
 
-    BINDINGS = [Binding("ctrl+c", "quit", "Exit", priority=True)]
+    BINDINGS = [
+        Binding("ctrl+c", "copy_or_quit", "Copy / Exit", priority=True),
+        Binding("ctrl+t", "toggle_theme", "Theme"),
+    ]
 
     def __init__(self, config_path=DEFAULT_CONFIG):
         super().__init__()
         self.config = load_config(config_path)
         self.logger = setup_logging(self.config["data_dir"], "maintenance")
         self.busy = False
+        saved_theme = self.config.get("maintenance_theme")
+        if saved_theme in self.available_themes:
+            self.theme = saved_theme
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -63,12 +104,20 @@ class MaintenanceApp(App):
             yield Button("Pull model", id="model-pull")
             yield LoadingIndicator(id="busy")
         yield Label("Commands and diagnostic output", id="activity")
-        yield RichLog(id="maintenance-log", auto_scroll=True, max_lines=1000, wrap=True)
+        yield SelectableRichLog(
+            id="maintenance-log",
+            auto_scroll=True,
+            max_lines=1000,
+            wrap=True,
+            markup=True,
+            highlight=True,
+        )
         yield Footer()
 
     def on_mount(self):
         self.query_one("#busy", LoadingIndicator).display = False
         self.query_one("#maintenance-log").border_title = "Maintenance output"
+        self.watch(self, "theme", self._persist_theme, init=False)
         self.screen.set_class(self.size.width < 100 or self.size.height < 30, "compact")
 
     def on_resize(self, event):
@@ -89,6 +138,26 @@ class MaintenanceApp(App):
             content.stylize(style)
         self.query_one("#maintenance-log", RichLog).write(content)
         self.logger.log(level, message)
+
+    def _persist_theme(self, theme):
+        config_path = Path(self.config["config_path"])
+        try:
+            values = json.loads(config_path.read_text(encoding="utf-8"))
+            values["maintenance_theme"] = theme
+            config_path.write_text(json.dumps(values, indent=2) + "\n", encoding="utf-8")
+        except (OSError, ValueError) as error:
+            self.logger.error("Could not persist maintenance theme: %s", error)
+            self.notify("Could not save the maintenance theme", severity="warning")
+
+    def action_toggle_theme(self):
+        self.theme = "textual-light" if self.current_theme.dark else "textual-dark"
+
+    def action_copy_or_quit(self):
+        selected_text = self.screen.get_selected_text()
+        if selected_text:
+            self.copy_to_clipboard(selected_text)
+        else:
+            self.exit()
 
     def _finish(self, message, failed=False):
         self.busy = False

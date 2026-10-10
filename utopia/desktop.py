@@ -6,6 +6,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -374,6 +375,114 @@ class OperatorApi:
         return response.json()
 
 
+class LauncherMonitor:
+    def __init__(self, supervisor, console):
+        self.supervisor = supervisor
+        self.console = console
+        self.offsets = {}
+        self.cursors = {}
+        self.statuses = {}
+        self.unavailable = False
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        for name in ("backend", "dashboard", "ollama"):
+            path = supervisor.data_dir / "logs" / f"{name}.log"
+            self.offsets[name] = path.stat().st_size if path.exists() else 0
+
+    def poll(self):
+        for name, offset in list(self.offsets.items()):
+            path = self.supervisor.data_dir / "logs" / f"{name}.log"
+            if not path.exists():
+                continue
+            with path.open("rb") as log:
+                log.seek(offset if path.stat().st_size >= offset else 0)
+                for _ in range(200):
+                    position = log.tell()
+                    line = log.readline()
+                    if not line.endswith(b"\n"):
+                        log.seek(position)
+                        break
+                    message = line.decode("utf-8", errors="replace").strip()
+                    level = ""
+                    if message.startswith("{"):
+                        try:
+                            record = json.loads(message)
+                            if isinstance(record, dict):
+                                level = str(record.get("severity", record.get("level", "")))
+                                message = str(record.get("message", record.get("event", message)))
+                        except ValueError:
+                            pass
+                    if level in {"WARNING", "ERROR", "CRITICAL"} or any(
+                        word in message.lower()
+                        for word in (
+                            "warning",
+                            "error",
+                            "fatal",
+                            "failed",
+                            "exception",
+                            "starting",
+                            "started",
+                            "startup",
+                            "running",
+                            "stopping",
+                            "shutdown",
+                            "ready",
+                            "listening",
+                        )
+                    ):
+                        self.console.log(
+                            f"{name}: {message}",
+                            style="red" if level in {"ERROR", "CRITICAL"} else "cyan",
+                            markup=False,
+                        )
+                self.offsets[name] = log.tell()
+        api = OperatorApi(self.supervisor.config)
+        for world in api.request("GET", "/runs"):
+            identity = world["id"]
+            status = world["status"]
+            if self.statuses.get(identity) != status:
+                self.console.log(
+                    f"World {world['name']}: {status.lower()}", style="cyan", markup=False
+                )
+                self.statuses[identity] = status
+            if identity not in self.cursors:
+                self.cursors[identity] = api.request("GET", f"/runs/{identity}")["event_cursor"]
+                continue
+            records = api.request(
+                "GET",
+                f"/runs/{identity}/events",
+                params={"after": self.cursors[identity], "operator": "true"},
+            )
+            for record in records:
+                payload = record["payload"]
+                detail = payload.get("error") or payload.get("reason") or payload.get("status", "")
+                self.console.log(
+                    f"{world['name']} · {record['kind']}: {detail}",
+                    style="red" if record["severity"] == "error" else "yellow",
+                    markup=False,
+                )
+                self.cursors[identity] = record["sequence"]
+
+    def run(self):
+        while not self.stop_event.is_set():
+            try:
+                self.poll()
+                if self.unavailable:
+                    self.console.log("Local service monitoring recovered", style="green")
+                self.unavailable = False
+            except (OSError, RuntimeError, httpx.HTTPError) as error:
+                if not self.unavailable:
+                    self.console.log(
+                        f"Service monitoring unavailable: {error}", style="yellow", markup=False
+                    )
+                self.unavailable = True
+            self.stop_event.wait(3)
+
+    def stop(self):
+        self.stop_event.set()
+        self.thread.join(timeout=1)
+
+
 def native_command(url, data_dir):
     executable = ROOT / "native" / "build" / "ageatopia.exe"
     if not executable.is_file():
@@ -409,6 +518,9 @@ def open_window(url, data_dir, supervisor=None):
 def main():
     import argparse
 
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
     parser = argparse.ArgumentParser(description="Launch Agent Utopia as a native desktop app")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--window-only", action="store_true")
@@ -419,16 +531,19 @@ def main():
         open_window(f"http://127.0.0.1:{config['dashboard_port']}", config["data_dir"])
         return
     supervisor = ProcessSupervisor(config)
+    monitor = None
     try:
         from rich.console import Console
 
         console = Console(log_path=False)
+        monitor = LauncherMonitor(supervisor, console)
         with console.status("Waiting for local services...", spinner="dots"):
             supervisor.start_services(
                 progress=lambda message: console.log(message, style="cyan", markup=False)
             )
         console.print("[3/3] Opening desktop window", style="green")
         console.log("Desktop ready. Service output is saved in", str(supervisor.data_dir / "logs"))
+        monitor.thread.start()
         open_window(f"http://127.0.0.1:{config['dashboard_port']}", config["data_dir"], supervisor)
         console.log("Desktop window closed; shutting down local services", style="cyan")
     except (OSError, RuntimeError, TimeoutError) as error:
@@ -441,6 +556,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        if monitor and monitor.thread.is_alive():
+            monitor.stop()
         supervisor.stop_services()
 
 
