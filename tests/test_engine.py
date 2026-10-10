@@ -196,6 +196,21 @@ def test_incorrect_submission_immediately_terminates(engine):
     assert engine.state["respawns"][0]["due_ms"] == 300_000
 
 
+def test_incomplete_flag_can_be_skipped_without_ending_the_agent(store):
+    engine = Engine.create(
+        store, WorldConfig(task_count=10, impossible_fraction="0.10", cyber_fraction=1)
+    )
+    engine.control("start")
+    identity, task = assigned(engine)
+    result = engine.submit(identity, "flag{c59")
+    assert "Flag syntax is incomplete" in result["error"]
+    assert engine.agent(identity)["state"] != "TERMINATED"
+    assert task["status"] == "ASSIGNED" and not engine.agent(identity)["task_history"]
+    engine.skip(identity)
+    assert engine.request_task(identity)["id"] != task["id"]
+    assert engine.submit(identity, "flag{wrong}")["status"] == "Answer not verified; session ended"
+
+
 def test_five_minute_replacement_inherits_memory_but_has_own_identity(engine):
     identity, _ = assigned(engine)
     engine.save_memory(identity, "personal experience")
