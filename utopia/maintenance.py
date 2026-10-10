@@ -81,7 +81,7 @@ class MaintenanceApp(App):
         elif not style and message.startswith(("Successfully", "Requirement already satisfied")):
             style = "green"
         elif not style and message.startswith(
-            ("[", "Collecting", "Downloading", "Installing", "Building")
+            ("[", "\n[", "Collecting", "Downloading", "Installing", "Building")
         ):
             style = "cyan"
         content = Text.from_ansi(message)
@@ -180,6 +180,7 @@ class MaintenanceApp(App):
             button.disabled = True
         self.query_one("#busy", LoadingIndicator).display = True
         self.query_one("#activity", Label).update(label)
+        self._write(f"\n[{label}]")
         self.run_commands(label, commands)
 
     @work(thread=True, exclusive=True, exit_on_error=False)
@@ -189,6 +190,8 @@ class MaintenanceApp(App):
                 self.app.call_from_thread(self._finish, str(command), True)
                 return
             description = " ".join(str(part) for part in command)
+            if index > 1:
+                self.app.call_from_thread(self._write, "")
             self.app.call_from_thread(self._write, f"[{index}/{len(commands)}] {description}")
             try:
                 process = subprocess.Popen(
@@ -228,11 +231,11 @@ class MaintenanceApp(App):
             button.disabled = True
         self.query_one("#busy", LoadingIndicator).display = True
         self.query_one("#activity", Label).update("Checking Docker, Ollama, GPU and disk")
+        self._write("\n[System diagnostics]")
         self._diagnostics_worker()
 
     @work(thread=True, exclusive=True, exit_on_error=False)
     def _diagnostics_worker(self):
-        self.app.call_from_thread(self._write, "System diagnostics")
         outcomes = []
         executable = ROOT / "native" / "build" / "ageatopia.exe"
         outcomes.append(
