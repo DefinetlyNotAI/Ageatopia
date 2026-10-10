@@ -443,7 +443,9 @@ async def test_runtime_error_pause_stops_processes_and_resolves_pending_tools(en
 def test_context_bound_includes_provider_thinking_and_tool_calls():
     with pytest.raises(ContextOverflow):
         SharedInference.context_bound(
-            [{"role": "assistant", "content": "", "thinking": "x" * 10000}], [], ModelSettings()
+            [{"role": "assistant", "content": "", "thinking": "x" * 10000}],
+            [],
+            ModelSettings(context_tokens=8192),
         )
 
 

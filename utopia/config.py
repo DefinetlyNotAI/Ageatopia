@@ -14,7 +14,7 @@ class ModelSettings(StrictModel):
     provider: Literal["ollama", "openai-compatible"] = "ollama"
     base_url: str = "http://127.0.0.1:11434"
     model: str = "qwen3.5:2b"
-    context_tokens: int = Field(default=8192, ge=512, le=131072)
+    context_tokens: int = Field(default=16384, ge=512, le=131072)
     prompt_batch_tokens: int = Field(default=256, ge=1, le=8192)
     temperature: float = Field(default=0.7, ge=0, le=2)
     seed: int = 42
