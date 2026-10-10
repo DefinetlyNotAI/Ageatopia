@@ -32,6 +32,16 @@ def test_initial_population_and_context_separation(engine):
     assert all(a["history"][-1]["content"] != "private" for a in agents[1:])
 
 
+def test_recovery_clears_inference_metrics_from_previous_process(engine):
+    with engine.transaction():
+        engine.state["metrics"].update(queue_depth=3, active_inferences=1, tokens=120)
+    restored = Engine(engine.store, engine.store.load(engine.state["id"]))
+    restored.recover()
+    assert restored.state["metrics"]["queue_depth"] == 0
+    assert restored.state["metrics"]["active_inferences"] == 0
+    assert restored.state["metrics"]["tokens"] == 120
+
+
 def test_lifetime_reward_and_engine_task_duration(engine):
     identity, task = assigned(engine)
     engine.tick(90_000, 1000)

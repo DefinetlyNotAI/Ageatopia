@@ -620,6 +620,7 @@ class Engine:
 
     def recover(self):
         with self.transaction():
+            self.state["metrics"].update(queue_depth=0, active_inferences=0)
             if self.state["status"] == "RUNNING":
                 self.state["status"] = "PAUSED"
             for agent in self.state["agents"].values():
