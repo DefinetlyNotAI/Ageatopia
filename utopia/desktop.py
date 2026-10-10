@@ -166,7 +166,7 @@ class ProcessSupervisor:
                 time.sleep(0.25)
         raise TimeoutError("Ollama did not become ready within 30 seconds")
 
-    def start_services(self):
+    def start_services(self, progress=None):
         if all(
             name in self.processes and self.processes[name][0].poll() is None
             for name in ("backend", "dashboard")
@@ -184,7 +184,11 @@ class ProcessSupervisor:
         env["UTOPIA_API_URL"] = f"http://127.0.0.1:{self.config['backend_port']}"
         try:
             if self.config["manage_ollama"]:
+                if progress:
+                    progress("Connecting to Ollama...")
                 self.start_ollama()
+            if progress:
+                progress("Starting backend and dashboard...")
             self._spawn(
                 "backend",
                 [sys.executable, "-m", "utopia.cli", "--port", str(self.config["backend_port"])],
@@ -205,12 +209,12 @@ class ProcessSupervisor:
                 ROOT / "dashboard",
                 env,
             )
-            self.wait_ready()
+            self.wait_ready(progress=progress)
         except BaseException:
             self.stop_services()
             raise
 
-    def wait_ready(self, timeout=90):
+    def wait_ready(self, timeout=90, progress=None):
         base = time.monotonic()
         endpoints = {
             "backend": f"http://127.0.0.1:{self.config['backend_port']}/health",
@@ -229,6 +233,8 @@ class ProcessSupervisor:
                         response = client.get(url)
                         if response.is_success:
                             ready.add(name)
+                            if progress:
+                                progress(f"{name.title()} is ready")
                             self.logger.info(json.dumps({"action": "ready", "service": name}))
                     except httpx.HTTPError:
                         pass
@@ -389,8 +395,20 @@ def main():
         return
     supervisor = ProcessSupervisor(config)
     try:
-        supervisor.start_services()
+        from rich.console import Console
+
+        console = Console()
+        with console.status("Waiting for local services...", spinner="dots"):
+            supervisor.start_services(progress=lambda message: console.print(message, style="cyan"))
+        console.print("[3/3] Opening desktop window", style="green")
         open_window(f"http://127.0.0.1:{config['dashboard_port']}", config["data_dir"])
+    except (OSError, RuntimeError, TimeoutError) as error:
+        from rich.console import Console
+
+        Console(stderr=True).print(
+            f"Could not start Agent Utopia: {error}", style="red", markup=False
+        )
+        raise SystemExit(1) from None
     except KeyboardInterrupt:
         pass
     finally:

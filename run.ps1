@@ -3,6 +3,8 @@ param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $python = Join-Path $root ".venv\Scripts\python.exe"
+Write-Host "Agent Utopia | Starting desktop" -ForegroundColor Cyan
+Write-Host "[1/3] Checking Python environment..." -ForegroundColor DarkCyan
 
 if (-not (Test-Path -LiteralPath $python)) {
     $launcher = Get-Command py -ErrorAction SilentlyContinue
@@ -25,6 +27,7 @@ if ($LASTEXITCODE -ne 0) {
     & $python -m pip install -e $root
     if ($LASTEXITCODE -ne 0) { throw "Agent Utopia installation failed." }
 }
+Write-Host "[2/3] Preparing local services..." -ForegroundColor DarkCyan
 
 Push-Location $root
 try {
