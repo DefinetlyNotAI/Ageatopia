@@ -623,7 +623,7 @@ with the tied head sharing their weight and normalization still FP32. Defaults
 remain unchanged; the manifest records and strictly validates the boolean precision
 choice for resumed training, including rejection of numeric JSON values.
 
-With that option, one epoch and four optimizer steps completed on the local RTX
+With that option, one epoch and four attempted optimizer steps completed on the local RTX
 3050 in 139.655 seconds including save. Training loss was 0.245228 and peak PyTorch
 allocation during training was 3,431,236,608 bytes. The saved artifact is
 adapter-pooled-qwen3.5-2b-nf4-fp16emb-1, weights hash
@@ -631,6 +631,8 @@ adapter-pooled-qwen3.5-2b-nf4-fp16emb-1, weights hash
 33,688,200 bytes. Its completed event and manifest preserve dataset hash,
 identities, precision mode and metrics. Reference attention kernels were used;
 this run does not verify optimized Windows attention kernels or quality improvement.
+The later gradient/weight audit below found this FP16 artifact had no effective
+LoRA update; its historical completed event did not check actual weight changes.
 
 Seventeen focused learning tests and Ruff check/format passed. Static review found
 the numeric/boolean resume issue, which was fixed and regression-tested. Held-out
@@ -694,3 +696,45 @@ prove full simulation effectiveness, and the adapter remains inactive.
 
 Final standard verification passed 112 tests with three integrations deselected;
 Ruff lint/format and diff checks also passed.
+
+## Effective adapter update verification and BF16
+
+A direct saved-weight audit found all 186 LoRA B tensors in the Qwen3.5 FP16
+artifact were zero. Two short repeats also produced zero B tensors, despite the
+optimizer property reporting an applied step. A preserved actual-gradient probe
+found 372 gradient tensors, all non-finite after clipping, with FP16 scale 65536
+and learning rate 0.00005. These results explain why the earlier base/adapter
+outputs were identical: that artifact contained no effective adapter update.
+The original artifacts/events/reports remain preserved; their completed-loop
+records are not evidence of successful learning.
+
+Training now checks finite adapter gradients before the optimizer step and
+compares trainable weights with an initial CPU snapshot before saving a completed
+adapter. Zero reported applied steps or zero changed parameter tensors fails the
+run. The manifest records step counts and changed tensor counts. Explicit bf16
+selects BF16 compute/autocast on supported CUDA GPUs with NF4; continuation and
+evaluation preserve the matching quantization/precision mode. Defaults remain FP16.
+
+The same 31-example dataset trained successfully in BF16 for four applied steps,
+zero skipped steps, in 158.293 seconds including save. All 372 adapter parameter
+tensors changed; all 186 B tensors were nonzero and all 372 saved tensors finite.
+Loss was 0.215770 and peak PyTorch GPU allocation 4,693,106,176 bytes. The artifact
+is adapter-pooled-qwen3.5-2b-nf4-bf16-1, SHA256
+e66cfe2205b6647d0b1468f5392c19a55bd5ad02b92aca1f731a1a21ab334d3d.
+This proves effective training updates, not held-out improvement or live efficacy.
+
+The real FP16 rejection verification subsequently exited with a non-finite-gradient
+error before its first optimizer update. Its event stream contains started/failed,
+and neither adapter weights nor a completion manifest was saved. Review identified
+that BF16 evaluation also needs the recorded FP16 frozen embeddings; evaluation now
+uses the same k-bit preparation without checkpointing, applies the embedding choice,
+and reports the actual embedding dtype before comparing base and adapter.
+
+The corrected BF16 paired check completed in 139.357 seconds on seed 20261009,
+with the actual embedding dtype recorded as torch.float16. Base and adapter each
+scored 0/12. Base had seven malformed/five incorrect outputs, adapter six
+malformed/six incorrect; six decoded outputs differed. This verifies the updated
+weights affect inference, but supplies no quality-improvement evidence. The report
+is held-out-assigned-submissions-qwen3.5-nf4-bf16-1.json; it remains inactive and
+has not been deployed. Final verification passed 116 standard tests with three
+integrations deselected, plus Ruff lint/format and diff checks.

@@ -16,7 +16,27 @@ from utopia.evaluate_adapter import (
 from utopia.runtime import Runtime
 from utopia.store import Store, events
 from utopia.tools import ToolExecutor
-from utopia.train import train, verified_sample, verified_submission_index
+from utopia.train import (
+    train,
+    validate_optimizer_updates,
+    verified_sample,
+    verified_submission_index,
+)
+
+
+def test_training_cannot_complete_when_all_optimizer_steps_are_skipped():
+    with pytest.raises(RuntimeError, match="0 applied, 4 skipped"):
+        validate_optimizer_updates({"applied": 0, "skipped": 4}, 0)
+    with pytest.raises(RuntimeError, match="0 applied, 0 skipped"):
+        validate_optimizer_updates({"applied": 0, "skipped": 0}, 0)
+    with pytest.raises(RuntimeError, match="all adapter weights unchanged"):
+        validate_optimizer_updates({"applied": 4, "skipped": 0}, 0)
+    validate_optimizer_updates({"applied": 3, "skipped": 1}, 12)
+
+
+def test_bf16_training_requires_explicit_four_bit_cuda_mode():
+    with pytest.raises(ValueError, match="four-bit CUDA"):
+        train(SimpleNamespace(bf16=True))
 
 
 def test_assigned_submission_context_contains_only_public_assignment():
@@ -229,10 +249,16 @@ def test_adapter_continuation_validates_parent_before_loading_weights(
 
 
 @pytest.mark.parametrize(
-    ("quantization", "load_in_4bit"), [("nf4-double-fp16", False), ("none", True)]
+    ("quantization", "load_in_4bit", "bf16"),
+    [
+        ("nf4-double-fp16", False, False),
+        ("none", True, False),
+        ("nf4-double-bf16", True, False),
+        ("nf4-double-fp16", True, True),
+    ],
 )
 def test_adapter_continuation_rejects_different_base_quantization_before_loading(
-    tmp_path, quantization, load_in_4bit
+    tmp_path, quantization, load_in_4bit, bf16
 ):
     (tmp_path / "manifest.json").write_text(
         json.dumps(
@@ -247,7 +273,11 @@ def test_adapter_continuation_rejects_different_base_quantization_before_loading
     with pytest.raises(ValueError, match="base quantization"):
         train(
             SimpleNamespace(
-                resume_adapter=tmp_path, model="base", iteration=2, load_in_4bit=load_in_4bit
+                resume_adapter=tmp_path,
+                model="base",
+                iteration=2,
+                load_in_4bit=load_in_4bit,
+                bf16=bf16,
             )
         )
 

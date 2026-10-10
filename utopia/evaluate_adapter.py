@@ -164,7 +164,7 @@ def evaluate(args):
         raise ValueError("Evaluation output already exists; preserve prior results")
 
     import torch
-    from peft import PeftModel
+    from peft import PeftModel, prepare_model_for_kbit_training
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
@@ -175,27 +175,39 @@ def evaluate(args):
     quantization = manifest.get("base_quantization", "none")
     model_options = {}
     if quantization != "none":
-        if quantization != "nf4-double-fp16":
+        if quantization not in {"nf4-double-fp16", "nf4-double-bf16"}:
             raise ValueError("Unsupported adapter base quantization")
         if device != "cuda":
             raise ValueError("Four-bit evaluation requires CUDA and training-4bit dependencies")
+        if quantization == "nf4-double-bf16" and not torch.cuda.is_bf16_supported():
+            raise ValueError("BF16 evaluation requires a supported CUDA GPU")
         model_options = {
             "device_map": {"": 0},
             "quantization_config": BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_use_double_quant=True,
-                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_compute_dtype=(
+                    torch.bfloat16 if quantization == "nf4-double-bf16" else torch.float16
+                ),
             ),
         }
     base = AutoModelForCausalLM.from_pretrained(
         args.model,
         trust_remote_code=False,
-        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+        torch_dtype=(
+            (torch.bfloat16 if quantization == "nf4-double-bf16" else torch.float16)
+            if device == "cuda"
+            else torch.float32
+        ),
         **model_options,
     )
     if quantization == "none":
         base = base.to(device)
+    else:
+        base = prepare_model_for_kbit_training(base, use_gradient_checkpointing=False)
+        if manifest.get("fp16_frozen_embeddings", False):
+            base.get_input_embeddings().to(dtype=torch.float16)
     model = PeftModel.from_pretrained(base, args.adapter).eval()
     grader = Grader()
 
@@ -251,6 +263,7 @@ def evaluate(args):
         "training_objective": manifest.get("training_objective"),
         "base_quantization": quantization,
         "fp16_frozen_embeddings": manifest.get("fp16_frozen_embeddings", False),
+        "embedding_dtype": str(model.get_input_embeddings().weight.dtype),
         "training_dataset_version": manifest["dataset_version"],
         "seed": args.seed,
         "task_count": len(tasks),

@@ -8,6 +8,19 @@ import time
 from pathlib import Path
 
 
+def validate_optimizer_updates(steps, changed_parameters):
+    if steps["applied"] < 1:
+        raise RuntimeError(
+            "Training made no optimizer updates: "
+            f"{steps['applied']} applied, {steps['skipped']} skipped; "
+            "no completed adapter was saved"
+        )
+    if changed_parameters < 1:
+        raise RuntimeError(
+            "Training left all adapter weights unchanged; no completed adapter was saved"
+        )
+
+
 def verified_submission_index(messages):
     if not messages or messages[-1].get("role") != "tool":
         raise ValueError("Training trajectory must end with a verified task result")
@@ -95,6 +108,9 @@ def main():
         "--load-in-4bit", action="store_true", help="Train LoRA on a CUDA NF4 quantized base"
     )
     parser.add_argument(
+        "--bf16", action="store_true", help="Use BF16 compute and training with four-bit CUDA"
+    )
+    parser.add_argument(
         "--fp16-frozen-embeddings",
         action="store_true",
         help="Keep frozen input embeddings in FP16 during four-bit CUDA training",
@@ -142,7 +158,14 @@ def main():
 def train(args):
     parent = None
     resume = getattr(args, "resume_adapter", None)
-    quantization = "nf4-double-fp16" if getattr(args, "load_in_4bit", False) else "none"
+    bf16 = getattr(args, "bf16", False)
+    quantization = (
+        f"nf4-double-{'bf16' if bf16 else 'fp16'}"
+        if getattr(args, "load_in_4bit", False)
+        else "none"
+    )
+    if bf16 and quantization == "none":
+        raise ValueError("BF16 requires four-bit CUDA training")
     fp16_embeddings = getattr(args, "fp16_frozen_embeddings", False)
     if fp16_embeddings and quantization == "none":
         raise ValueError("FP16 frozen embeddings require four-bit CUDA training")
@@ -167,20 +190,24 @@ def train(args):
         BitsAndBytesConfig,
         DataCollatorForSeq2Seq,
         Trainer,
+        TrainerCallback,
         TrainingArguments,
     )
 
     model_options = {}
+    compute_dtype = torch.bfloat16 if bf16 else torch.float16
     if quantization != "none":
         if not torch.cuda.is_available():
             raise ValueError("Four-bit training requires CUDA and the training-4bit dependencies")
+        if bf16 and not torch.cuda.is_bf16_supported():
+            raise ValueError("BF16 training requires a supported CUDA GPU")
         model_options = {
             "device_map": {"": 0},
             "quantization_config": BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_use_double_quant=True,
-                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_compute_dtype=compute_dtype,
             ),
         }
 
@@ -201,7 +228,7 @@ def train(args):
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         trust_remote_code=False,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        torch_dtype=compute_dtype if torch.cuda.is_available() else torch.float32,
         **model_options,
     )
     if quantization != "none":
@@ -217,6 +244,29 @@ def train(args):
         )
     model.config.use_cache = False
     model.enable_input_require_grads()
+    optimizer_steps = {"applied": 0, "skipped": 0}
+    initial_weights = {
+        name: parameter.detach().cpu().clone()
+        for name, parameter in model.named_parameters()
+        if parameter.requires_grad
+    }
+
+    class UpdateCounter(TrainerCallback):
+        def on_pre_optimizer_step(self, args, state, control, **kwargs):
+            gradients = [
+                parameter.grad
+                for parameter in kwargs["model"].parameters()
+                if parameter.requires_grad and parameter.grad is not None
+            ]
+            if not gradients or any(not torch.isfinite(gradient).all() for gradient in gradients):
+                raise RuntimeError(
+                    "Missing or non-finite adapter gradients; optimizer update aborted"
+                )
+
+        def on_optimizer_step(self, args, state, control, **kwargs):
+            skipped = kwargs["optimizer"].step_was_skipped
+            optimizer_steps["skipped" if skipped else "applied"] += 1
+
     restrict_logits = (
         "logits_to_keep" in inspect.signature(model.get_base_model().forward).parameters
     )
@@ -243,11 +293,13 @@ def train(args):
             gradient_accumulation_steps=8,
             gradient_checkpointing=True,
             report_to="none",
-            fp16=torch.cuda.is_available(),
+            fp16=torch.cuda.is_available() and not bf16,
+            bf16=bf16,
             seed=42,
         ),
         train_dataset=Dataset.from_list(samples),
         data_collator=DataCollatorForSeq2Seq(tokenizer=tokenizer, label_pad_token_id=-100),
+        callbacks=[UpdateCounter()],
     )
     if restrict_logits:
         trainer.model_accepts_loss_kwargs = False
@@ -255,6 +307,12 @@ def train(args):
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
     metrics = trainer.train().metrics
+    changed_parameters = sum(
+        not torch.equal(initial_weights[name], parameter.detach().cpu())
+        for name, parameter in model.named_parameters()
+        if name in initial_weights
+    )
+    validate_optimizer_updates(optimizer_steps, changed_parameters)
     model.save_pretrained(args.output)
     tokenizer.save_pretrained(args.output)
     manifest = {
@@ -275,6 +333,8 @@ def train(args):
         "parent_adapter": parent,
         "training_seconds": round(time.perf_counter() - started, 3),
         "training_metrics": metrics,
+        "optimizer_steps": optimizer_steps,
+        "changed_adapter_parameters": changed_parameters,
         "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
         "peak_gpu_bytes": torch.cuda.max_memory_allocated() if torch.cuda.is_available() else None,
     }

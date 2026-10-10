@@ -287,6 +287,13 @@ records this mode, continuation requires the same mode, and evaluation automatic
 loads the same quantized base for both comparisons. Four-bit mode requires CUDA;
 it does not silently fall back to CPU or enable background training.
 
+For supported CUDA GPUs, add `--bf16` to use BF16 compute and training with the
+four-bit base. Evaluation uses the same precision, and continuation rejects
+switching between FP16 and BF16. Training checks adapter gradients before each
+optimizer update and verifies that adapter weights actually changed before saving
+a completed checkpoint. A finite loss or finished training loop alone is insufficient.
+The manifest records optimizer steps and the number of changed parameter tensors.
+
 For a large frozen input embedding table, `--fp16-frozen-embeddings` keeps that
 table in FP16 during four-bit CUDA training. A tied output head follows the same
 weight; normalization remains FP32. This saved about 1 GB of allocated GPU memory
