@@ -296,7 +296,10 @@ class Runtime:
                         continue
                     if identity not in self.known_agents:
                         self.known_agents.add(identity)
-                        if self.engine.config.cleanup_on_respawn:
+                        if (
+                            self.engine.config.cleanup_on_respawn
+                            and agent.get("birth_reason") == "replacement"
+                        ):
                             await self.sandbox.execute(
                                 "cleanup",
                                 "find . -mindepth 1 -maxdepth 1 "
@@ -306,9 +309,7 @@ class Runtime:
                                 "workspace.cleaned", {"policy": "on-respawn"}, identity
                             )
                     if worker is None or worker.done():
-                        if agent["state"] == "IDLE" and not any(
-                            t["status"] == "AVAILABLE" for t in self.engine.state["tasks"]
-                        ):
+                        if agent["state"] == "IDLE" and not self.engine.available_task(identity):
                             continue
                         if agent["retry_after_ms"] > self.engine.state["sim_ms"]:
                             continue
@@ -530,9 +531,7 @@ class Runtime:
                 engine.conversation(identity, result.message)
                 if not calls:
                     relaxing = agent["state"] == "RELAX"
-                    work_remains = agent["task_id"] or any(
-                        task["status"] == "AVAILABLE" for task in engine.state["tasks"]
-                    )
+                    work_remains = agent["task_id"] or self.engine.available_task(identity)
                     if work_remains and not relaxing:
                         engine.conversation(
                             identity,

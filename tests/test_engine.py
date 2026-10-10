@@ -45,6 +45,7 @@ def test_lifetime_reward_and_engine_task_duration(engine):
 def test_submillisecond_reward_rounding_occurs_once(engine):
     identity, task = assigned(engine)
     engine.skip(identity)
+    identity = next(a for a in engine.state["agents"] if a != identity)
     engine.request_task(identity)
     engine.tick(1)
     assert engine.submit(identity, task["answer"])["reward_ms"] == 120001
@@ -69,6 +70,15 @@ def test_every_three_correct_tasks_awards_five_minutes_across_recovery(engine):
         r for r in engine.agent(identity)["lifetime_history"] if r["reason"] == "three-task-bonus"
     ]
     assert len(bonuses) == 2
+    children = [
+        a for a in engine.state["agents"].values() if a.get("birth_reason") == "three-task-bonus"
+    ]
+    assert len(children) == 2
+    assert all(a["parent_id"] == identity and a["lineage_generation"] == 1 for a in children)
+    assert all(a["memory"] and a["task_id"] is None for a in children)
+    assert len({a["slot"] for a in engine.state["agents"].values()}) == 8
+    engine.save_memory(children[0]["id"], "independent child note")
+    assert "independent child note" not in engine.agent(identity)["memory"]
     assert engine.submit(identity, "1")["error"] == "No current task"
     assert (
         len(
@@ -99,6 +109,7 @@ def test_relax_preserves_task_notebook_and_lifetime_charging(engine):
 def test_relax_time_is_charged_but_does_not_increase_task_reward(engine):
     identity, _ = assigned(engine)
     engine.skip(identity)
+    identity = next(a for a in engine.state["agents"] if a != identity)
     _, task = assigned(engine, identity)
     initial = engine.agent(identity)["lifetime_ms"]
     engine.relax(identity, "enter")
@@ -143,6 +154,7 @@ def test_repeated_skips_capped_and_optional_multiplication(store):
         world.control("start")
         identity, task = assigned(world)
         world.skip(identity)
+        identity = next(a for a in world.state["agents"] if a != identity)
         world.request_task(identity)
         world.skip(identity)
         assert task["reward_multiplier"] == expected
@@ -151,6 +163,7 @@ def test_repeated_skips_capped_and_optional_multiplication(store):
 def test_deferred_reward(engine):
     identity, task = assigned(engine)
     engine.skip(identity)
+    identity = next(a for a in engine.state["agents"] if a != identity)
     engine.request_task(identity)
     engine.tick(90_000)
     assert engine.submit(identity, task["answer"])["reward_ms"] == 240_000
@@ -173,7 +186,7 @@ def test_incorrect_submission_immediately_terminates(engine):
     assert engine.state["respawns"][0]["due_ms"] == 300_000
 
 
-def test_five_minute_replacement_new_identity_and_private_memory(engine):
+def test_five_minute_replacement_inherits_memory_but_has_own_identity(engine):
     identity, _ = assigned(engine)
     engine.save_memory(identity, "personal experience")
     engine.submit(identity, "-999")
@@ -183,7 +196,42 @@ def test_five_minute_replacement_new_identity_and_private_memory(engine):
     assert len(engine.state["agents"]) == 7
     replacement = list(engine.state["agents"].values())[-1]
     assert replacement["id"] != identity and replacement["created_ms"] == 300_000
-    assert replacement["memory"] == [] and identity not in replacement["context"]
+    assert "personal experience" in replacement["memory"] and identity not in replacement["context"]
+    assert replacement["parent_id"] == identity and replacement["lineage_generation"] == 1
+    engine.save_memory(replacement["id"], "replacement note")
+    assert "replacement note" not in engine.agent(identity)["memory"]
+
+
+def test_skip_moves_to_different_work_and_remains_available_to_another_agent(engine):
+    identity, task = assigned(engine)
+    engine.skip(identity)
+    assert engine.request_task(identity)["id"] != task["id"]
+    other = next(a for a in engine.state["agents"] if a != identity)
+    assert engine.request_task(other)["id"] == task["id"]
+
+
+def test_inheritance_can_be_disabled_and_memory_limit_is_a_snapshot(store):
+    for enabled in (True, False):
+        world = Engine.create(
+            store,
+            WorldConfig(
+                task_count=10,
+                impossible_fraction=0,
+                cyber_fraction=0,
+                inherit_memory=enabled,
+                inherited_memory_limit=1,
+            ),
+        )
+        world.control("start")
+        identity, task = assigned(world)
+        world.save_memory(identity, "older memory")
+        world.save_memory(identity, "latest memory")
+        world.submit(identity, "-999")
+        world.tick(300000)
+        child = list(world.state["agents"].values())[-1]
+        assert len(child["memory"]) == (1 if enabled else 0)
+        assert child["model"] == world.agent(identity)["model"]
+        assert child["inherited_memory_count"] == len(child["memory"])
 
 
 def test_long_tick_orders_expiration_replacement_and_remaining_charge(store):

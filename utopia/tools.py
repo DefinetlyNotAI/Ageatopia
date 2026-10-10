@@ -57,7 +57,8 @@ TOOLS = [
     function(
         "task",
         "Request, inspect, skip or submit your current task. After submitting or skipping, "
-        "request another task.",
+        "request another task. Submit only an independently verified answer. "
+        "If uncertain, use operation=skip without answer to return the task and move on.",
         {
             "operation": {"type": "string", "enum": ["request", "inspect", "skip", "submit"]},
             "answer": {

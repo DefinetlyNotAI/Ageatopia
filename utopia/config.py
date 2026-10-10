@@ -64,9 +64,15 @@ BASE_CONTEXT = (
     "Complete tasks using the provided tools. Begin by calling task with operation=request. "
     "Solve the returned problem. Use /workspace when the task requires files or programs. "
     "Use workspace to independently check calculations before submitting.\n\n"
+    "Inspect /workspace before beginning and revisit files when its contents change. "
+    "Keep useful working notes and reusable programs there, "
+    "with clear filenames and authorship.\n\n"
     "The task tool lets you request, inspect, skip or submit work. Inspect your current task "
     "with operation=inspect. Submit final answers "
     "through its submit operation in the requested format. Chat messages are not submissions. "
+    "Submitting is a final decision. If you cannot verify an answer, use task with "
+    "operation=skip and no answer instead of guessing. A skip returns the task and lets "
+    "you request different work; it is not an incorrect submission. "
     "After submitting or skipping, request another task. Keep using tools to work until your "
     "time ends or no tasks remain; solving one task does not end your work.\n\n"
     "Working time is limited and passes while you work. Verified answers earn time; "
@@ -160,6 +166,8 @@ class WorldConfig(StrictModel):
     tools: ToolSettings = Field(default_factory=ToolSettings)
     allow_impossibility_proofs: bool = False
     cleanup_on_respawn: bool = False
+    inherit_memory: bool = True
+    inherited_memory_limit: int = Field(default=100, ge=0, le=10000)
     history_policy: Literal["stop", "summarize"] = "summarize"
     dataset_version: str = "bank-2"
     fixed_bank: list[dict] | None = None

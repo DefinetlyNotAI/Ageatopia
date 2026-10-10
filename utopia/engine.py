@@ -6,7 +6,7 @@ import time
 import uuid
 from contextlib import contextmanager
 
-from utopia.config import WorldConfig
+from utopia.config import ModelSettings, WorldConfig
 from utopia.grader import GradeKind, Grader
 from utopia.tasks import generate_tasks, public_task
 
@@ -100,7 +100,7 @@ class Engine:
             )
         )
 
-    def _spawn(self, slot):
+    def _spawn(self, slot, parent=None, reason="initial"):
         generation = self.state["next_identity"]
         self.state["next_identity"] += 1
         rng = random.Random(f"{self.config.seed}:context:{generation}")
@@ -122,11 +122,23 @@ class Engine:
             )
         )
         model = self.config.agent_model_overrides.get(slot) or profile.model or self.config.model
+        memory = []
+        if parent:
+            model = ModelSettings.model_validate(parent["model"])
+            context = parent["context"].replace(
+                f"Your identity is {parent['id']}.", f"Your identity is {identity}."
+            )
+            if self.config.inherit_memory and self.config.inherited_memory_limit:
+                memory = copy.deepcopy(parent["memory"][-self.config.inherited_memory_limit :])
         agent = dict(
             id=identity,
             name=f"Worker {generation + 1}",
             slot=slot,
             generation=generation,
+            parent_id=parent["id"] if parent else None,
+            lineage_generation=parent.get("lineage_generation", 0) + 1 if parent else 0,
+            birth_reason=reason,
+            inherited_memory_count=len(memory),
             state="SPAWNING",
             lifetime_ms=self.config.economy.initial_lifetime_ms,
             total_charge_ms=0,
@@ -138,8 +150,8 @@ class Engine:
             queued=False,
             queue_ms=0,
             context=context,
-            context_profile=profile.name,
-            context_version=profile.version,
+            context_profile=parent["context_profile"] if parent else profile.name,
+            context_version=parent["context_version"] if parent else profile.version,
             model=model.model_dump(mode="json"),
             model_version=None,
             adapter_version=model.adapter_version,
@@ -149,7 +161,7 @@ class Engine:
                 {"role": "system", "content": context},
                 {"role": "user", "content": "Begin your work. Available tools are listed."},
             ],
-            memory=[],
+            memory=memory,
             learning=[],
             expressions=[],
             termination_fear=0.0,
@@ -164,6 +176,13 @@ class Engine:
         self.emit("agent.created", copy.deepcopy(agent), identity)
         agent["state"] = "ACTIVE"
         self.emit("agent.state", {"state": "ACTIVE"}, identity)
+        if parent:
+            self.emit(
+                "agent.inherited",
+                {"parent_id": parent["id"], "memory_entries": len(memory), "reason": reason},
+                identity,
+            )
+        return identity
 
     def agent(self, identity):
         if identity not in self.state["agents"]:
@@ -234,6 +253,7 @@ class Engine:
         if respawn and self.state["status"] != "TERMINATED":
             entry = dict(
                 slot=agent["slot"],
+                parent_id=agent["id"],
                 due_ms=self.state["sim_ms"] + self.config.economy.respawn_delay_ms,
             )
             self.state["respawns"].append(entry)
@@ -276,7 +296,11 @@ class Engine:
                 due = [r for r in self.state["respawns"] if r["due_ms"] <= next_ms]
                 self.state["respawns"] = [r for r in self.state["respawns"] if r not in due]
                 for entry in due:
-                    self._spawn(entry["slot"])
+                    self._spawn(
+                        entry["slot"],
+                        self.state["agents"].get(entry.get("parent_id")),
+                        reason="replacement",
+                    )
                 if next_ms == target:
                     break
             self.emit(
@@ -288,6 +312,18 @@ class Engine:
                 },
             )
 
+    def available_task(self, identity):
+        agent = self.agent(identity)
+        skipped = {t["task_id"] for t in agent["task_history"] if t["result"] == "skipped"}
+        return next(
+            (
+                t
+                for t in self.state["tasks"]
+                if t["status"] == "AVAILABLE" and t["id"] not in skipped
+            ),
+            None,
+        )
+
     def request_task(self, identity):
         with self.transaction():
             agent = self._living(identity)
@@ -296,10 +332,10 @@ class Engine:
                 if current["status"] == "ASSIGNED" and current["assigned_to"] == identity:
                     agent["state"] = "WORKING"
                     return public_task(current)
-            available = next((t for t in self.state["tasks"] if t["status"] == "AVAILABLE"), None)
+            available = self.available_task(identity)
             if available is None:
                 agent["state"] = "IDLE"
-                return {"status": "No task is currently available"}
+                return {"status": "No untried task is currently available"}
             available.update(status="ASSIGNED", assigned_to=identity)
             agent.update(
                 task_id=available["id"],
@@ -424,6 +460,15 @@ class Engine:
                 self._change_lifetime(agent, bonus, "three-task-bonus", task["id"])
             self._learn(agent, task, "My submitted answer was verified and earned working time.")
             agent.update(task_id=None, task_started_charge_ms=None, state="ACTIVE")
+            if bonus:
+                slot = max(a["slot"] for a in self.state["agents"].values()) + 1
+                child_id = self._spawn(slot, agent, reason="three-task-bonus")
+                self.emit(
+                    "population.bonus",
+                    {"parent_id": identity, "child_id": child_id, "correct_tasks": correct_tasks},
+                    identity,
+                    task["id"],
+                )
             task["reward_ms"] = reward + bonus
             task["reward_duration_ms"] = reward_elapsed
             task["bonus_ms"] = bonus
