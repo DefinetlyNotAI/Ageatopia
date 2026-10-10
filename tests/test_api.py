@@ -2,11 +2,46 @@ import base64
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from utopia.api import create_app
 
 HEADERS = {"Authorization": "Bearer test-operator"}
+
+
+@pytest.mark.parametrize("target", ["default", "override", "profile"])
+def test_world_and_preset_reject_small_agent_context(tmp_path, target):
+    with TestClient(create_app(tmp_path, token="test-operator")) as client:
+        config = client.get("/system", headers=HEADERS).json()["defaults"]
+        model = {**config["model"], "context_tokens": 8191}
+        if target == "default":
+            config["model"] = model
+        elif target == "override":
+            config["agent_model_overrides"] = {"0": model}
+        else:
+            config["contexts"][0]["model"] = model
+        for path, payload in (("/runs", config), ("/presets", {"name": "Small", "config": config})):
+            result = client.post(path, headers=HEADERS, json=payload)
+            assert result.status_code == 422
+            assert "at least 8,192" in result.json()["detail"][0]["msg"]
+
+
+def test_legacy_world_remains_readable_but_cannot_resume_small_context(tmp_path):
+    app = create_app(tmp_path, token="test-operator")
+    with TestClient(app) as client:
+        run = client.post("/runs", headers=HEADERS, json={}).json()
+        engine = app.state.engines[run["id"]]
+        with engine.transaction():
+            engine.state["config"]["model"]["context_tokens"] = 4096
+            for agent in engine.state["agents"].values():
+                agent["model"]["context_tokens"] = 4096
+            engine.state["status"] = "PAUSED"
+    with TestClient(create_app(tmp_path, token="test-operator")) as client:
+        assert client.get(f"/runs/{run['id']}", headers=HEADERS).status_code == 200
+        result = client.post(f"/runs/{run['id']}/control/resume", headers=HEADERS)
+        assert result.status_code == 503
+        assert "at least 8,192" in result.json()["detail"]
 
 
 def test_operator_authentication_and_host_restrictions(tmp_path):

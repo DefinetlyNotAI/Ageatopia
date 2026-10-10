@@ -17,7 +17,7 @@ class Engine:
     def __init__(self, store, state, grader=None):
         self.store = store
         self.state = state
-        self.config = WorldConfig.model_validate(state["config"])
+        self.config = WorldConfig.model_validate(state["config"], context={"stored_world": True})
         self.grader = grader or Grader()
         self.lock = threading.RLock()
         self._pending = []

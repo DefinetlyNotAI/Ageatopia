@@ -1,7 +1,9 @@
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
+
+MIN_AGENT_CONTEXT_TOKENS = 8192
 
 
 class StrictModel(BaseModel):
@@ -161,6 +163,28 @@ class WorldConfig(StrictModel):
     history_policy: Literal["stop", "summarize"] = "summarize"
     dataset_version: str = "bank-2"
     fixed_bank: list[dict] | None = None
+
+    def validate_agent_context(self):
+        models = [("Default model", self.model)]
+        models.extend(
+            (f"Agent {slot + 1} model", model) for slot, model in self.agent_model_overrides.items()
+        )
+        models.extend(
+            (f"Context {profile.name} model", profile.model)
+            for profile in self.contexts
+            if profile.model
+        )
+        for name, model in models:
+            if model.context_tokens < MIN_AGENT_CONTEXT_TOKENS:
+                raise ValueError(
+                    f"{name} context tokens must be at least {MIN_AGENT_CONTEXT_TOKENS:,}"
+                )
+
+    @model_validator(mode="after")
+    def minimum_agent_context(self, info: ValidationInfo):
+        if not (info.context and info.context.get("stored_world")):
+            self.validate_agent_context()
+        return self
 
     @model_validator(mode="after")
     def exact_distribution(self):

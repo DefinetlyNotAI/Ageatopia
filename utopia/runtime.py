@@ -110,6 +110,7 @@ class Runtime:
                 self.engine.record("inference.preloaded", {"model": settings.model, **timing})
 
     async def start(self, action):
+        self.engine.config.validate_agent_context()
         if not self.sandbox.available:
             await self.prepare()
         else:
