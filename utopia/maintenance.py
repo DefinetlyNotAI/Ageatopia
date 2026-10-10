@@ -150,7 +150,8 @@ class MaintenanceApp(App):
             self.notify("Could not save the maintenance theme", severity="warning")
 
     def action_toggle_theme(self):
-        self.theme = "textual-light" if self.current_theme.dark else "textual-dark"
+        themes = list(self.available_themes)
+        self.theme = themes[(themes.index(self.theme) + 1) % len(themes)]
 
     def action_copy_or_quit(self):
         selected_text = self.screen.get_selected_text()

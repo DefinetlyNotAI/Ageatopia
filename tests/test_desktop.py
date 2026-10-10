@@ -78,6 +78,15 @@ async def test_maintenance_restores_and_persists_theme(tmp_path):
         app.theme = "textual-dark"
         await pilot.pause()
         assert json.loads(path.read_text(encoding="utf-8"))["maintenance_theme"] == "textual-dark"
+        themes = set(app.available_themes)
+        assert len(themes) > 2
+        visited = set()
+        for _ in themes:
+            await pilot.press("ctrl+t")
+            visited.add(app.theme)
+        assert visited == themes
+        assert app.theme == "textual-dark"
+        assert json.loads(path.read_text(encoding="utf-8"))["maintenance_theme"] == app.theme
 
 
 async def test_maintenance_ctrl_c_copies_selected_output_without_exiting(tmp_path):
