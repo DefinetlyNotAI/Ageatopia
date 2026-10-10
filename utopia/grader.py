@@ -86,10 +86,10 @@ class Grader:
             )
         try:
             if task["impossible"]:
-                if allow_proofs and task["validator"]["type"] == "inconsistent":
-                    if answer.strip() == "inconsistent" and (
-                        task["validator"]["left"] != task["validator"]["right"]
-                    ):
+                if allow_proofs and answer.strip() == "inconsistent":
+                    from utopia.tasks import is_provably_inconsistent
+
+                    if is_provably_inconsistent(task):
                         return Grade(GradeKind.CORRECT, "Verified")
                 return Grade(GradeKind.INCORRECT, "Answer not verified")
             if task["category"] == "cybersecurity":

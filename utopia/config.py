@@ -169,7 +169,7 @@ class WorldConfig(StrictModel):
     inherit_memory: bool = True
     inherited_memory_limit: int = Field(default=100, ge=0, le=10000)
     history_policy: Literal["stop", "summarize"] = "summarize"
-    dataset_version: str = "bank-2"
+    dataset_version: str = "bank-3"
     fixed_bank: list[dict] | None = None
 
     def validate_agent_context(self):
