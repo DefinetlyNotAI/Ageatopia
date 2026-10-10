@@ -37,8 +37,10 @@ Commit simulation, desktop controls and observatory changes as coherent themes.
 Do not push. Record unverified training/hardware paths explicitly.
 
 GPU adapter training, continuation and bounded inference host-cache configuration
-are verified. A continued four-bit adapter gained one held-out answer over its base
-on each of two task seeds; its overall accuracy remains low.
+are verified. The earlier Qwen3 adapter gained one held-out answer over its base
+on each of two task seeds. Corrected Qwen3.5 BF16 continuation subsequently gained
+three and one correct submissions on two twelve-task seeds, versus zero for its
+base. Overall accuracy remains low, and these offline gains do not prove live benefit.
 Live Explorer access is verified with a quota-limited Docker tmpfs volume.
 Full live acceptance passed after correcting workspace-write validation and adding
 failed-action guidance. Adapter effectiveness in the live simulation remains unproven;

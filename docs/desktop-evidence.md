@@ -738,3 +738,46 @@ weights affect inference, but supplies no quality-improvement evidence. The repo
 is held-out-assigned-submissions-qwen3.5-nf4-bf16-1.json; it remains inactive and
 has not been deployed. Final verification passed 116 standard tests with three
 integrations deselected, plus Ruff lint/format and diff checks.
+
+## Corrected Qwen3.5 adapter continuation
+
+The effective BF16 adapter was resumed into a separate lora-2 output using the
+same 31 verified examples, two additional epochs, matching NF4/BF16 compute and
+FP16 frozen embeddings. Eight optimizer steps applied, zero were skipped, and all
+372 trainable tensors changed with finite saved values. Runtime including save was
+314.418 seconds, training loss 0.147712, peak PyTorch allocation 4,726,897,152 bytes.
+
+The saved child adapter-pooled-qwen3.5-2b-nf4-bf16-2 has weights SHA256
+64287a7a0c61337683ccfa210cdf699c86d324011971e18ecbf4ef06584bdd16.
+The parent's hash remained e66cfe2205b6647d0b1468f5392c19a55bd5ad02b92aca1f731a1a21ab334d3d.
+Its manifest retains the complete parent manifest, dataset hash and identities;
+continuation-verification.json independently compares all saved tensors with the
+parent. This verifies persistent continuation and effective updates from a saved
+checkpoint; lower training loss alone is not quality-improvement evidence.
+
+On the separate twelve-task seed 20261010, the paired assigned-submission check
+completed in 119.094 seconds: base 0/12, continued adapter 1/12. The adapter correctly
+submitted 6 for gcd(36, 42). Base outputs were six malformed/six incorrect; adapter
+outputs two malformed/nine incorrect/one correct, with nine decoded outputs changed.
+This is a small held-out gain in the documented single-turn protocol, with low
+overall accuracy. The preserved report is
+held-out-assigned-submissions-qwen3.5-nf4-bf16-2-seed2.json; no automatic activation
+or claim of live simulation improvement follows from it.
+
+The first seed, 20261009, then completed in 109.260 seconds: base 0/12, continued
+adapter 3/12. Correct answers were 5 for the linear equation, 14 for the sum of
+squares through 3, and 12 for the paired linear equations. Base outputs were seven
+malformed/five incorrect; adapter outputs two malformed/seven incorrect/three
+correct, with ten decoded outputs changed. The report is
+held-out-assigned-submissions-qwen3.5-nf4-bf16-2-seed1.json. Together the two
+checks produced base 0/24 versus adapter 4/24, each using the same public assignment
+protocol, tool definitions, greedy decoding, precision and private grader. Training
+and parent-lineage prompts were excluded; no new targets or private answers entered
+training between evaluations. This verifies a limited two-seed held-out benefit
+from actual Qwen3.5 weight continuation, with low overall accuracy. It does not
+establish full simulation benefit or justify automatic activation.
+
+Both runs terminated successfully and GPU allocation returned to zero. Application
+source was unchanged in this verification slice; the existing 116-test standard
+verification from the preceding training fix remains applicable. Documentation diff
+checks passed; the parent, child, lineage proof and original reports are retained.
