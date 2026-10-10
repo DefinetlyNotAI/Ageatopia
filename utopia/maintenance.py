@@ -22,7 +22,10 @@ class MaintenanceApp(App):
     TITLE = "Agent Utopia · Maintenance"
     CSS = """
     Screen { layout: vertical; }
-    #health { height: auto; min-height: 5; padding: 1 2; color: $text-muted; }
+    #health {
+        height: auto; min-height: 5; max-height: 8;
+        overflow-y: auto; padding: 1 2; color: $text-muted;
+    }
     .actions { height: auto; padding: 1 2; }
     .actions Button { margin-right: 1; }
     #model-name { width: 40; }
@@ -30,7 +33,7 @@ class MaintenanceApp(App):
     Screen.compact .actions { padding: 0 1; }
     Screen.compact .actions Button { min-width: 0; width: 1fr; }
     Screen.compact #model-name { width: 1fr; }
-    Screen.compact #health { min-height: 2; padding: 0 1; }
+    Screen.compact #health { min-height: 2; max-height: 5; padding: 0 1; }
     #activity { height: 3; padding: 1 2; }
     #maintenance-log { height: 1fr; border: round $primary-darken-2; }
     """
@@ -270,7 +273,8 @@ class MaintenanceApp(App):
         outcomes.append(f"Disk: {disk.free // (1024**3)} GiB free of {disk.total // (1024**3)} GiB")
         message = "\n".join(outcomes)
         self.app.call_from_thread(self._write, message)
-        self.app.call_from_thread(self._set_health, message)
+        summary = "\n".join(outcome.splitlines()[0].split(" · ")[0] for outcome in outcomes)
+        self.app.call_from_thread(self._set_health, summary)
         self.app.call_from_thread(self._finish, "Diagnostics completed")
 
     def _set_health(self, message):

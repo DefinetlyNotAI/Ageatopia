@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from textual.widgets import Button, Label, LoadingIndicator, TextArea
+from textual.widgets import Button, Label, LoadingIndicator, RichLog, TextArea
 
 from utopia.control import ControlApp
 from utopia.desktop import ProcessSupervisor, validate_config
@@ -55,6 +55,17 @@ async def test_maintenance_worker_failure_resets_busy(tmp_path, monkeypatch):
         app._run_steps("Checking pip", [[sys.executable, "-m", "pip", "--version"]])
         await pilot.pause(0.3)
         assert not app.busy
+
+
+async def test_maintenance_diagnostics_keep_controls_and_log_visible(tmp_path):
+    path = tmp_path / "desktop.json"
+    path.write_text(json.dumps({"data_dir": str(tmp_path)}), encoding="utf-8")
+    app = MaintenanceApp(path)
+    async with app.run_test(size=(80, 24)) as pilot:
+        app._set_health("Docker output\n" * 30)
+        await pilot.pause()
+        assert app.query_one("#diagnostics", Button).region.bottom < 24
+        assert app.query_one("#maintenance-log", RichLog).region.height >= 4
 
 
 async def test_control_room_saves_model_server_settings(tmp_path):
