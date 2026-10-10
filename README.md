@@ -14,9 +14,10 @@ starts local Ollama when no server is already listening.
 The default is six agents sharing Qwen3.5:2B and one inference worker.
 
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.lock
-.\.venv\Scripts\python.exe -m pip install -e .
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.lock
+python -m pip install -e .
 docker build -t agent-utopia-world:1 sandbox
 ollama pull qwen3.5:2b
 ```

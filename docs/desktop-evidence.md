@@ -1,5 +1,11 @@
 # Desktop rebuild evidence and learning evaluation
 
+Current status: implementation and full requirement audit completed on 2026-10-10.
+The requirement audit at the end maps the entire request to implementation and
+verification. Earlier failures and pending-status statements record their original
+verification stage; later results supersede them. Hardware/backend limits and the
+limited observed learning gains remain explicitly described.
+
 ## Implementation decisions
 
 The desktop application uses a native Windows WebView2 window and existing responsive
@@ -98,7 +104,7 @@ training loss on one trajectory does not prove improved held-out task performanc
 No adapter was activated in the simulation, and these Qwen3 weights must not be
 applied to the different Qwen3.5 base used by the default inference model.
 
-## Verification ledger
+## Initial verification ledger
 
 - Python suite: 91 passed, three real-provider tests skipped in the standard run.
   This includes task-request guidance and adding the event lookup index to an
@@ -152,11 +158,12 @@ applied to the different Qwen3.5 base used by the default inference model.
 - `npm audit --omit=dev`: zero vulnerabilities. Nine advisory entries remain in
   existing development tooling; unrelated major upgrades were not forced.
 
-Actual GPU LoRA training and adapter continuation have passed as described above.
-Held-out math evaluation below found no improvement; full simulation improvement
-and adapter activation remain unverified.
-Memory-based adaptation changes no model weights. The overall goal remains active
-pending acceptance work.
+At this initial stage, GPU LoRA training and adapter continuation had passed as
+described above. The first held-out math evaluation below found no improvement;
+full simulation improvement and adapter activation were then unverified.
+Memory-based adaptation changes no model weights. The goal remained active pending
+acceptance work at that stage; later sections record the acceptance pass and
+effective Qwen3.5 continuation, held-out gains and deployed live comparison.
 
 ## Bounded host-cache verification
 
@@ -889,3 +896,61 @@ Current verification after these probes: 116 standard Python tests passed, three
 real-provider tests deselected; Ruff check and formatting passed. Dashboard lint,
 TypeScript checking and production build passed. No application source or default
 configuration changed in this performance verification slice.
+
+## Requirement audit, 2026-10-10
+
+The audit inspected current source and retained runtime evidence against the full
+request, including the approved C Win32/WebView2 direction and the later RELAX and
+recurring-bonus requirements. Historical failures above remain historical evidence;
+later successful checks supersede their open status without rewriting the records.
+
+| Requirement | Implementation and verification |
+| --- | --- |
+| Native modern responsive desktop | native/ageatopia.c uses Win32 and C COM WebView2; the compiled host launched again with a responding Ageatopia window. Current production renderer inspected at desktop and 390-pixel widths. |
+| Structured professional terminal interface | ControlApp and MaintenanceApp provide status, controls, bounded logs, progress indicators and keyboard navigation; fresh actual Textual pilots at 80x24 and 120x40. |
+| Central application-control script | utopia/control.py configures application/worlds and controls owned services, native launch and world lifecycle; shared supervisor startup/readiness/shutdown verified again. |
+| Separate installation/repair/diagnostics script | utopia/maintenance.py exposes dependency installation, native/dashboard/sandbox builds, model pull, repair and Docker/Ollama/GPU/disk diagnostics; maintain.ps1 bootstraps it. |
+| Dynamic interactive graphs | components/charts.tsx and dashboard event samples; current rendered zoom changed 250 to 125 visible samples, pan changed the window, keyboard selected a sample and pointer inspection displayed its value/time. Earlier live updates remain verified. |
+| Agent thoughts, dialogue, emotions and state interface | inspector.tsx has Overview, Reported state, Dialogue, Learning & memory and Activity; displays actual recorded expressions, context, fear, processes, time, model and tasks. |
+| Concise natural expressions | BASE_CONTEXT and reflect tool invite short thoughts/feelings/intentions; retained live default acceptance contains two actual agent.expression events. These are expressed reports, not invented private reasoning. |
+| Active personal notebooks | memory and reflect tools plus outcome experiences write identity-scoped entries; live acceptance has seven memory writes, deployed comparison has nine and ten. |
+| Explorer button for each sandbox | inspector action calls authenticated sandbox/open; Docker's actual quota-limited live directory was verified bidirectionally in Explorer, including file selection. Stopped containers expose explicitly labeled recorded snapshots. |
+| Performance, resource use and throughput | bounded observer histories, event lookup index, shared inference queue, prompt-cache budget, context summarization and cancellation cleanup; current batching/concurrency probes and full live acceptance/comparison evidence above. |
+| GPU model residency | keep_alive=-1 and same-settings preload; current inference probes reported the entire 2383486646-byte default model in GPU memory and indefinite residency. |
+| Unnecessary initial response delay | preload occurs before lifetime charging; current first tool responses 795-922 ms after preload, with separately recorded cold loading and cached-prompt timings. Physical loading remains measurable. |
+| Confirmed permanent world deletion | exact-ID confirmation, stopped runtime/container/volume, owned-directory removal and secure SQLite erasure; restart/no-restore/other-world invariants covered by current tests and prior real live-directory deletion verification. |
+| Termination fear affects behavior | configurable pressure increases with depleted lifetime and enters each agent's decision context, asking the agent to use it in feelings, risk assessment and intentions; persistence/tool tests verify actual stored pressure and reflections. |
+| Markdown rendering | ReactMarkdown, GFM and syntax highlighting; current fixture visibly rendered headings, bullet/numbered lists, table and highlighted code. |
+| LaTeX mathematics | remark-math and rehype-katex; current notebook rendered three mathematical expressions including inline notation and display integrals. |
+| Consistent UI/UX and shortcuts | shared navigation/action placement, keyboard tabs, Alt+1 through Alt+6, contextual world/agent/task controls; responsive current notebook had no page-wide overflow at 390 pixels. |
+| Internal/external/file links | entity-links.tsx, validated Markdown links and native external navigation; current related-agent link resolves to the inspector, workspace paths use sandbox/open, external HTTP(S) opens through the OS. |
+| Supported GPU inference/embeddings/parallel work | all default model bytes GPU-resident; fresh real embedding batch produced four 768-dimensional vectors entirely on GPU. Actual qwen35 backend rejects parallel slots; supported concurrency remains configurable, with no unsupported throughput claim. |
+| Persistent experience retrieval/reflection/adaptation | own notebook/outcome entries are retrieved into subsequent decision context; lexical retrieval is always available and optional embeddings rerank candidates; durable reflection/learning/recovery tests pass. |
+| Practical periodic model learning | verified-trajectory LoRA command, strict lineage/continuation, effective-gradient/update guards, actual GPU BF16 continuation and GGUF deployment; limited held-out and live gains measured. Offline/paused updates are explicit and automatic activation remains disabled. |
+| Learning and individual development survive restarts | identity-scoped SQLite checkpoints retain notebook, learning, expressions, task/bonus histories and fear; current fresh Store reopen matched all fixture notebook entries. Saved adapters and parent lineage remain on disk and deployed tags retain their model digests. |
+| Intentional RELAX state | tools remain available, task remains assigned, lifetime is charged, context lets agents choose journaling/exploration or resume; engine/runtime regression checks and native rendering verified. |
+| Five minutes every three correct tasks | cumulative verified task history awards 300000 ms at each multiple of three, independently of ordinary rewards; third/sixth/restart tests pass and the real candidate's third-task bonus persisted in its ledger. |
+
+Current UI observations produced no browser warning/error logs. The native audit
+used .data/desktop-native-smoke.json, started backend/dashboard to readiness, and
+confirmed their ports 18000/13000 closed after owned shutdown. Its supervisor log
+records a graceful backend exit. The current graph screenshot is
+.data/verification/final-audit-graphs.png. Textual screenshots and widget metadata
+are final-audit-ControlApp-*.svg, final-audit-MaintenanceApp-*.svg and
+final-audit-tuis.json in that directory.
+
+The semantic-retrieval fixture used the actual memory tool with embeddinggemma,
+retrieved the relevant startup-latency note first and retained its notebook through
+a new Store connection. Ollama reported all 621763624 embedding-model bytes in GPU
+memory; its run, vectors' dimensions, placement and restart result are preserved in
+.data/verification/embedding-audit/result.json and its database. Fixture notes are
+explicit operator-authored verification content; autonomous usage is evidenced by
+the separate real simulation records. Only that embedding model was unloaded after
+the check.
+
+Independent completion review found no missing explicit product behavior. It
+identified the stale initial pending-status summary, now explicitly marked
+historical. Current standard verification remains 116 passed with three integration
+tests deselected, Ruff check/format and dashboard lint/typecheck/build passed;
+separate real-provider and rendered evidence above covers those external/runtime
+requirements. No requested behavior remains open after the requirement audit.

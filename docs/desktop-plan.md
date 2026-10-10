@@ -47,4 +47,9 @@ benefit and does not justify automatic activation.
 Live Explorer access is verified with a quota-limited Docker tmpfs volume.
 Full live acceptance passed after correcting workspace-write validation and adding
 failed-action guidance. See desktop-evidence.md for the retained training,
-deployment and live comparison evidence. The overall goal is not marked complete.
+deployment and live comparison evidence. The full requirement audit completed on
+2026-10-10, including current native startup/shutdown, responsive renderer and
+graph inspection, both TUI layouts, GPU semantic retrieval and durable notebook
+reopening. No requested product behavior remains open. Physical cold loading,
+qwen35's backend parallelism restriction and limited model accuracy are recorded
+practical limits; automatic weight activation remains disabled.
