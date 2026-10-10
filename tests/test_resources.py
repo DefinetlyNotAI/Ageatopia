@@ -34,7 +34,7 @@ def test_memory_guard_checks_ram_commit_and_recovery_margin(monkeypatch):
 async def test_memory_hold_preserves_agent_lifetimes_and_recovers(engine, monkeypatch):
     inference = SharedInference()
     runtime = Runtime(engine, inference)
-    state = {"total_mb": 16000, "available_mb": 500, "commit_available_mb": 4000}
+    state = {"total_mb": 16000, "available_mb": 200, "commit_available_mb": 4000}
     monkeypatch.setattr("utopia.resources.host_memory", lambda: state.copy())
     before = engine.state["sim_ms"]
     balances = [agent["lifetime_ms"] for agent in engine.state["agents"].values()]
@@ -94,6 +94,30 @@ def test_host_memory_reports_positive_global_values():
     assert snapshot["total_mb"] > 0
     assert 0 <= snapshot["available_mb"] <= snapshot["total_mb"]
     assert snapshot["commit_available_mb"] >= 0
+
+
+def test_small_buffers_use_commit_headroom_without_double_reserving_ram(monkeypatch):
+    state = {"total_mb": 16024, "available_mb": 289, "commit_available_mb": 1115}
+    monkeypatch.setattr("utopia.resources.host_memory", lambda: state.copy())
+    guard = MemoryGuard(256)
+    guard.check(64)
+    guard.check(128)
+    state["commit_available_mb"] = 575
+    with pytest.raises(MemoryPressure):
+        guard.check(64)
+
+
+async def test_restarted_runtime_clears_saved_memory_hold(engine, monkeypatch):
+    monkeypatch.setattr(
+        "utopia.resources.host_memory",
+        lambda: {"total_mb": 16024, "available_mb": 1000, "commit_available_mb": 2000},
+    )
+    inference = SharedInference()
+    engine.state["metrics"]["memory_pressure"] = True
+    runtime = Runtime(engine, inference)
+    assert runtime.check_memory()
+    assert not engine.state["metrics"]["memory_pressure"]
+    await inference.close()
 
 
 async def test_cold_model_budget_blocks_loading_but_resident_context_can_continue(monkeypatch):

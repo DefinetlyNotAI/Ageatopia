@@ -8,7 +8,7 @@ import pytest
 from textual.widgets import Button, Label, LoadingIndicator, RichLog, TextArea
 
 from utopia.control import ControlApp
-from utopia.desktop import LauncherMonitor, ProcessSupervisor, validate_config
+from utopia.desktop import LauncherMonitor, ProcessSupervisor, shutdown_wsl, validate_config
 from utopia.maintenance import MaintenanceApp
 
 
@@ -186,6 +186,40 @@ def test_external_ollama_is_never_adopted_or_stopped(tmp_path, monkeypatch):
     supervisor.stop_services()
     assert supervisor.processes == {}
     assert supervisor.status()["ollama"] == "external (not managed)"
+
+
+def test_process_cap_is_not_shrunk_to_current_free_ram(tmp_path, monkeypatch):
+    supervisor = ProcessSupervisor(validate_config({"data_dir": str(tmp_path)}))
+    caps = []
+    monkeypatch.setattr("utopia.desktop.os.name", "nt")
+    monkeypatch.setattr(
+        "utopia.resources.host_memory",
+        lambda: {"total_mb": 16024, "available_mb": 900, "commit_available_mb": 1900},
+    )
+    monkeypatch.setattr(
+        "utopia.desktop.WindowsMemoryJob",
+        lambda cap: caps.append(cap) or SimpleNamespace(spawn=lambda *a, **kw: "spawned"),
+    )
+    assert supervisor.spawn_limited(["service"]) == "spawned"
+    assert caps == [4096]
+
+
+def test_desktop_shutdown_stops_wsl_with_bounded_wait(monkeypatch):
+    from rich.console import Console
+
+    commands = []
+    monkeypatch.setattr("utopia.desktop.os.name", "nt")
+    monkeypatch.setattr(
+        "utopia.desktop.subprocess.run",
+        lambda command, **options: (
+            commands.append((command, options)) or SimpleNamespace(returncode=0)
+        ),
+    )
+    output = io.StringIO()
+    shutdown_wsl(Console(file=output))
+    assert commands[0][0] == ["wsl.exe", "--shutdown"]
+    assert commands[0][1]["timeout"] == 30
+    assert "WSL stopped" in output.getvalue()
 
 
 def test_owned_ollama_receives_process_local_cache_budget(tmp_path, monkeypatch):

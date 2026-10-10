@@ -67,31 +67,40 @@ it does not unload resident model weights or change global environment variables
 Zero disables this cache. It applies only when the launcher starts its own Ollama
 server. Set `manage_ollama` to `false` when using an independently managed provider.
 Closing the standalone desktop unloads models and stops the Ollama server it owns.
+`run.ps1` first stops remaining processes tied to this checkout, including their
+descendants. It attempts an authenticated backend shutdown before forced cleanup.
+Closing the launched desktop stops its services, then runs `wsl --shutdown`; this
+also stops every other WSL distro and Docker's WSL backend. World termination alone
+does not shut down WSL. External Ollama and Docker Desktop processes are not killed.
 
 Memory safety is enabled by default. `ram_reserve_mb` in `.data/desktop.json`
-defaults to `1024`; Windows commit headroom retains half this value (at least 512 MiB).
+defaults to `256`; Windows commit headroom retains half this value (at least 512 MiB).
 New work is blocked when its additional budget would consume this emergency reserve.
+Small request buffers are budgeted against commit headroom without also requiring
+their full size in idle physical RAM. Explicit large CPU loads still require RAM.
 Resuming an existing sandbox checks a small 64 MiB buffer, rather than reserving its
 entire configured memory ceiling again. Local Ollama uses its own GPU-aware scheduler
 for automatic offloading; only explicit CPU-only models are checked against model file
-size plus a context allowance. GPU-backed requests retain a 256 MiB host buffer; local
+size plus a context allowance. Resident GPU-backed requests retain a 64 MiB host buffer,
+and automatic cold loads check a 128 MiB host buffer; local
 inference is serialized. Managed Ollama keeps at most one model and one parallel request.
 An existing external Ollama server is never reconfigured or forcibly unloaded.
 
 `process_memory_mb` defaults to `4096`. On Windows the launcher applies a shared Job
 Object limit to the private committed memory of its backend, dashboard, owned Ollama,
 native window, and their descendants, before allowing them to execute. The actual cap
-is reduced if necessary to fit current host headroom. The dashboard's JS heap is capped
+is not shrunk to the amount of free RAM: committed memory can use the paging file,
+and a ceiling is not an upfront reservation. The dashboard's JS heap is capped
 at 512 MiB. Docker retains its separate per-world RAM/no-swap limits. These limits do
 not cap unrelated programs, external Ollama, GPU memory, file-backed mappings, or the
 Docker/WSL VM as a whole; they cannot guarantee that other programs leave RAM free.
 
 While running, memory pressure holds new inference/tool calls and freezes agent lifetime
-clocks. Recovery requires another 128 MiB of headroom to avoid cycling near the threshold.
+clocks. Recovery requires another 128 MiB of commit and 64 MiB of RAM headroom to avoid cycling near the threshold.
 The launcher logs the hold/recovery and the GUI shows a memory safety notice.
-Direct backend launches also use the reserve (`UTOPIA_RAM_RESERVE_MB`, default 1024),
-but the Windows process cap requires the desktop launcher. Both desktop memory settings
-accept integers from 512 to 65536 MiB. Linux uses host headroom checks and Docker limits;
+Direct backend launches also use the reserve (`UTOPIA_RAM_RESERVE_MB`, default 256),
+but the Windows process cap requires the desktop launcher. The RAM reserve accepts
+256 to 65536 MiB; the process cap accepts 512 to 65536 MiB. Linux uses host headroom checks and Docker limits;
 the Windows Job Object cap is Windows-only.
 
 For development, the backend can still run separately:

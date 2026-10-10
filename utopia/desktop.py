@@ -33,7 +33,7 @@ def default_config():
         "dashboard_port": 3000,
         "manage_ollama": True,
         "ollama_cache_ram_mb": 1024,
-        "ram_reserve_mb": 1024,
+        "ram_reserve_mb": 256,
         "process_memory_mb": 4096,
     }
 
@@ -57,8 +57,9 @@ def validate_config(values, path=DEFAULT_CONFIG):
         raise ValueError("Application ports must not conflict with local Ollama port 11434")
     for key in ("ram_reserve_mb", "process_memory_mb"):
         value = config[key]
-        if isinstance(value, bool) or not isinstance(value, int) or not 512 <= value <= 65536:
-            raise ValueError(f"{key} must be an integer between 512 and 65536")
+        minimum = 256 if key == "ram_reserve_mb" else 512
+        if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= 65536:
+            raise ValueError(f"{key} must be an integer between {minimum} and 65536")
     config["data_dir"] = str(Path(config["data_dir"]).expanduser().resolve())
     config["config_path"] = str(Path(path).expanduser().resolve())
     return config
@@ -110,21 +111,14 @@ class ProcessSupervisor:
         self.progress = None
         self.memory_guard = MemoryGuard(config["ram_reserve_mb"])
         self.memory_job = None
+        self.window_started = False
 
     def spawn_limited(self, command, **kwargs):
-        state = self.memory_guard.check(256)
+        state = self.memory_guard.check(128)
         if os.name != "nt":
             return subprocess.Popen(command, **kwargs)
         if self.memory_job is None:
-            budget = min(
-                self.config["process_memory_mb"],
-                state["available_mb"] - state["ram_reserve_mb"],
-                state["commit_available_mb"] - state["commit_reserve_mb"],
-            )
-            if budget < 512:
-                raise RuntimeError(
-                    "Desktop services need at least 512 MiB beyond the host reserve."
-                )
+            budget = self.config["process_memory_mb"]
             self.memory_job = WindowsMemoryJob(budget)
             message = (
                 f"Memory safety: owned processes capped at {budget} MiB; "
@@ -537,6 +531,8 @@ def native_command(url, data_dir):
 def open_window(url, data_dir, supervisor=None):
     spawn = supervisor.spawn_limited if supervisor else subprocess.Popen
     with spawn(native_command(url, data_dir), cwd=ROOT) as process:
+        if supervisor:
+            supervisor.window_started = True
         try:
             while True:
                 try:
@@ -558,6 +554,25 @@ def open_window(url, data_dir, supervisor=None):
             if process.poll() is None:
                 process.terminate()
                 process.wait(timeout=5)
+
+
+def shutdown_wsl(console):
+    if os.name != "nt":
+        return
+    console.log("Stopping WSL and Docker's WSL backend...", style="cyan")
+    try:
+        result = subprocess.run(
+            ["wsl.exe", "--shutdown"],
+            capture_output=True,
+            timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if result.returncode:
+            console.log("WSL shutdown failed; check wsl --shutdown manually", style="yellow")
+        else:
+            console.log("WSL stopped", style="green")
+    except (OSError, subprocess.TimeoutExpired) as error:
+        console.log(f"WSL shutdown failed: {error}", style="yellow", markup=False)
 
 
 def main():
@@ -586,7 +601,7 @@ def main():
             supervisor.start_services(
                 progress=lambda message: console.log(message, style="cyan", markup=False)
             )
-        console.print("[3/3] Opening desktop window", style="green")
+        console.print("[4/4] Opening desktop window", style="green")
         console.log("Desktop ready. Service output is saved in", str(supervisor.data_dir / "logs"))
         monitor.thread.start()
         open_window(f"http://127.0.0.1:{config['dashboard_port']}", config["data_dir"], supervisor)
@@ -603,7 +618,11 @@ def main():
     finally:
         if monitor and monitor.thread.is_alive():
             monitor.stop()
-        supervisor.stop_services()
+        try:
+            supervisor.stop_services()
+        finally:
+            if supervisor.window_started:
+                shutdown_wsl(console)
 
 
 if __name__ == "__main__":

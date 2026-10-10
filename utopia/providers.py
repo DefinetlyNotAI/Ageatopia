@@ -64,14 +64,14 @@ class SharedInference:
             None,
         )
         if loaded and loaded.get("context_length", 0) >= settings.context_tokens:
-            guard.check(256)
+            guard.check(64)
             return
         # Ollama chooses GPU offloading and context allocation using its own scheduler.
         # Only explicit CPU execution warrants budgeting the whole model in host RAM.
         if settings.gpu_layers == 0:
             guard.check(self.model_sizes[key] + max(512, settings.context_tokens // 8))
         else:
-            guard.check(256)
+            guard.check(128)
 
     @staticmethod
     def _ollama_options(settings):

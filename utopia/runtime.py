@@ -59,7 +59,7 @@ class Runtime:
                         "runtime.memory-pressure", {"error": str(error)}, severity="warning"
                     )
             return False
-        if self.memory_paused:
+        if self.memory_paused or self.engine.state["metrics"].get("memory_pressure"):
             self.memory_paused = False
             self.wall_anchor_ns = time.perf_counter_ns()
             with self.engine.transaction():
@@ -157,7 +157,7 @@ class Runtime:
     async def start(self, action):
         self.engine.config.validate_agent_context()
         # Docker's memory limit is a ceiling, not another upfront host allocation.
-        self.memory_guard.check(64 if getattr(self.sandbox, "started", False) else 256)
+        self.memory_guard.check(64 if getattr(self.sandbox, "started", False) else 128)
         self.check_memory()
         if getattr(self.sandbox, "started", False):
             if not self.sandbox.available:

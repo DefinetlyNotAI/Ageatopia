@@ -85,10 +85,10 @@ class MemoryGuard:
         self.reserve_mb = (
             reserve_mb
             if reserve_mb is not None
-            else int(os.environ.get("UTOPIA_RAM_RESERVE_MB", "1024"))
+            else int(os.environ.get("UTOPIA_RAM_RESERVE_MB", "256"))
         )
-        if not 512 <= self.reserve_mb <= 65536:
-            raise ValueError("RAM reserve must be between 512 and 65536 MiB")
+        if not 256 <= self.reserve_mb <= 65536:
+            raise ValueError("RAM reserve must be between 256 and 65536 MiB")
 
     def snapshot(self):
         state = host_memory()
@@ -99,15 +99,19 @@ class MemoryGuard:
     def check(self, allocation_mb=0, recovery=False):
         state = self.snapshot()
         margin = allocation_mb + (128 if recovery else 0)
+        # Small request buffers can be paged; budget their commit without requiring
+        # the same amount of physical RAM to remain idle as well.
+        ram_margin = (allocation_mb if allocation_mb > 256 else 0) + (64 if recovery else 0)
         if (
-            state["available_mb"] < state["ram_reserve_mb"] + margin
+            state["available_mb"] < state["ram_reserve_mb"] + ram_margin
             or state["commit_available_mb"] < state["commit_reserve_mb"] + margin
         ):
             raise MemoryPressure(
                 f"Memory safety hold: {state['available_mb']} MiB RAM and "
                 f"{state['commit_available_mb']} MiB Windows commit headroom available. "
                 f"Keep {state['ram_reserve_mb']} MiB RAM and {state['commit_reserve_mb']} MiB "
-                f"commit free, plus {margin} MiB for this allocation. "
+                f"commit free, plus {margin} MiB commit and {ram_margin} MiB RAM "
+                "for this allocation. "
                 "Free memory; work resumes automatically.",
                 allocation_mb=allocation_mb,
             )
