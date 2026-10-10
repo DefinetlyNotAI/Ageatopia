@@ -118,7 +118,7 @@ def public_trajectories(store, state):
             elif record["kind"] == "memory.context":
                 supplemental = {"role": "user", "content": record["payload"]["content"]}
             elif record["kind"] == "context.summarized":
-                messages = [
+                messages = record["payload"].get("history") or [
                     messages[0],
                     {
                         "role": "user",

@@ -56,11 +56,17 @@ TOOLS = [
     ),
     function(
         "task",
-        "Request, inspect, skip or submit your current task. After submitting or skipping, "
-        "request another task. Submit only an independently verified answer. "
+        "List available tasks, then choose one with request and task_id. Browse more with offset. "
+        "Inspect, skip or submit your current task. After finishing, choose another. "
+        "Submit only an independently verified answer. "
         "If uncertain, use operation=skip without answer to return the task and move on.",
         {
-            "operation": {"type": "string", "enum": ["request", "inspect", "skip", "submit"]},
+            "operation": {
+                "type": "string",
+                "enum": ["list", "request", "inspect", "skip", "submit"],
+            },
+            "task_id": {"type": "string", "description": "Task chosen from operation=list"},
+            "offset": {"type": "integer", "minimum": 0},
             "answer": {
                 "type": "string",
                 "description": "Required for operation=submit; omit for request, inspect and skip. "
@@ -91,6 +97,11 @@ TOOLS = [
         {
             "operation": {"type": "string", "enum": ["read", "write", "search"]},
             "text": {"type": "string"},
+            "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Read notebook entries from this index; follow next_offset",
+            },
         },
         ["operation"],
     ),
@@ -151,8 +162,12 @@ class ToolExecutor:
             if args["operation"] != "submit" and args.get("answer") is not None:
                 raise ValueError("To submit an answer, use task with operation=submit")
             match args["operation"]:
+                case "list":
+                    return engine.task_choices(identity, args.get("offset", 0))
                 case "request":
-                    return engine.request_task(identity)
+                    if not args.get("task_id") and not engine.agent(identity)["task_id"]:
+                        return engine.task_choices(identity)
+                    return engine.request_task(identity, args.get("task_id"))
                 case "inspect":
                     return engine.personal_state(identity)["task"] or {
                         "error": "No current task. Call task with operation=request."
@@ -161,7 +176,7 @@ class ToolExecutor:
                     return engine.skip(identity)
                 case "submit":
                     return engine.submit(identity, args.get("answer"), self.sandbox.available)
-            raise ValueError("Task operation must be request, inspect, skip or submit")
+            raise ValueError("Task operation must be list, request, inspect, skip or submit")
         if name == "lifetime":
             state = engine.personal_state(identity)
             return {
@@ -180,9 +195,21 @@ class ToolExecutor:
             if args["operation"] == "write":
                 return engine.save_memory(identity, args.get("text"))
             if args["operation"] == "read":
+                notebook = engine.agent(identity)["memory"]
+                offset = max(0, int(args.get("offset", max(0, len(notebook) - 20))))
+                notes = []
+                size = 0
+                for note in notebook[offset : offset + 20]:
+                    if notes and size + len(note.encode()) > 4096:
+                        break
+                    notes.append(note)
+                    size += len(note.encode())
                 return {
-                    "notes": engine.agent(identity)["memory"][-20:],
-                    "total": len(engine.agent(identity)["memory"]),
+                    "notes": notes,
+                    "total": len(notebook),
+                    "next_offset": offset + len(notes)
+                    if offset + len(notes) < len(notebook)
+                    else None,
                 }
             if args["operation"] == "search":
                 query = args.get("text", "")
@@ -215,7 +242,14 @@ class ToolExecutor:
                     },
                     identity,
                 )
-                return {"notes": candidates[:5]}
+                notes = []
+                size = 0
+                for note in candidates[:5]:
+                    if notes and size + len(note.encode()) > 4096:
+                        break
+                    notes.append(note)
+                    size += len(note.encode())
+                return {"notes": notes}
             raise ValueError("Unknown memory operation")
         if name != "workspace":
             raise ValueError("Unknown tool")

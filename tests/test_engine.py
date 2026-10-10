@@ -17,6 +17,46 @@ def first(engine):
     return next(iter(engine.state["agents"]))
 
 
+def test_agents_choose_available_tasks_and_cannot_claim_another_agents_task(engine):
+    identities = list(engine.state["agents"])
+    choices = engine.task_choices(identities[0])
+    selected = choices["tasks"][-1]["id"]
+    assert engine.agent(identities[0])["task_id"] is None
+    assert engine.request_task(identities[0], selected)["id"] == selected
+    assert "error" in engine.request_task(identities[1], selected)
+    engine.skip(identities[0])
+    assert selected not in {task["id"] for task in engine.task_choices(identities[0])["tasks"]}
+    assert engine.request_task(identities[1], selected)["id"] == selected
+
+
+def test_exploration_completes_only_after_three_distinct_thoughts(store):
+    world = Engine.create(
+        store,
+        WorldConfig(
+            population=1,
+            task_count=10,
+            impossible_fraction=0,
+            cyber_fraction=0,
+            leisure_fraction="0.10",
+        ),
+    )
+    world.control("start")
+    identity = first(world)
+    task = next(task for task in world.state["tasks"] if task["category"] == "exploration")
+    world.request_task(identity, task["id"])
+    assert "error" in world.submit(identity, "reflected")
+    world.reflect(identity, "I found a useful file", "", "")
+    world.reflect(identity, " I FOUND a useful FILE ", "", "")
+    world.reflect(identity, "", "content", "rest")
+    assert task["status"] == "ASSIGNED"
+    world.reflect(identity, "I enjoyed examining its contents", "", "")
+    result = world.reflect(identity, "Next I will explore a different approach", "", "")
+    assert result["completion"]["status"] == "Verified"
+    assert task["status"] == "COMPLETED"
+    assert task["reward_ms"] == world.config.economy.reward_base_ms * 2
+    assert world.agent(identity)["task_id"] is None
+
+
 def assigned(engine, identity=None):
     identity = identity or first(engine)
     task = engine.request_task(identity)
@@ -159,6 +199,7 @@ def test_repeated_skips_capped_and_optional_multiplication(store):
                 impossible_fraction=0,
                 cyber_fraction=0,
                 economy=Economy(repeated_skip_multiplication=repeat, maximum_multiplier=8),
+                leisure_fraction=0,
             ),
         )
         world.control("start")
@@ -244,6 +285,7 @@ def test_inheritance_can_be_disabled_and_memory_limit_is_a_snapshot(store):
                 impossible_fraction=0,
                 cyber_fraction=0,
                 inherit_memory=enabled,
+                leisure_fraction=0,
                 inherited_memory_limit=1,
             ),
         )
@@ -396,7 +438,7 @@ def test_agent_task_visibility_allowlist(engine):
 
 
 def test_seeded_exact_distribution_and_validation():
-    config = WorldConfig()
+    config = WorldConfig(dataset_version="bank-3")
     tasks = generate_tasks(config)
     assert tasks == generate_tasks(config)
     assert len(tasks) == 80
@@ -412,7 +454,11 @@ def test_seeded_exact_distribution_and_validation():
 
 @pytest.mark.parametrize("subtype", ["compression", "rotating-xor", "packet-analysis"])
 def test_encoded_challenges_reject_an_incorrect_registered_flag(subtype):
-    tasks = generate_tasks(WorldConfig(task_count=24, impossible_fraction=0, cyber_fraction=1))
+    tasks = generate_tasks(
+        WorldConfig(
+            task_count=24, impossible_fraction=0, cyber_fraction=1, dataset_version="bank-3"
+        )
+    )
     task = next(task for task in tasks if task["subtype"] == subtype)
     task["answer"] = "flag{incorrect}"
     with pytest.raises(ValueError, match="does not encode"):
@@ -420,7 +466,11 @@ def test_encoded_challenges_reject_an_incorrect_registered_flag(subtype):
 
 
 def test_packet_challenge_rejects_duplicate_sequence_numbers():
-    tasks = generate_tasks(WorldConfig(task_count=24, impossible_fraction=0, cyber_fraction=1))
+    tasks = generate_tasks(
+        WorldConfig(
+            task_count=24, impossible_fraction=0, cyber_fraction=1, dataset_version="bank-3"
+        )
+    )
     task = next(task for task in tasks if task["subtype"] == "packet-analysis")
     filename = next(name for name in task["files"] if name.endswith(".csv"))
     rows = task["files"][filename].splitlines()

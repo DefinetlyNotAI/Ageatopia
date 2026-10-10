@@ -11,6 +11,12 @@ from utopia.providers import ContextOverflow
 from utopia.sandbox import DockerSandbox, SandboxUnavailable, initial_workspace
 from utopia.tools import TOOLS, ToolExecutor
 
+OBSERVATION_INTERVAL_SECONDS = 2
+MAX_RECOVERY_DELAY_SECONDS = 8
+CONTEXT_COMPACT_THRESHOLD = 0.75
+CONTEXT_RECENT_MESSAGES = 6
+CONTEXT_ARCHIVE_CHARS = 3500
+
 
 class Runtime:
     def __init__(self, engine, inference):
@@ -29,6 +35,11 @@ class Runtime:
         self.termination_tasks = set()
         engine.on_terminated = self.schedule_termination
         self.observation_lock = asyncio.Lock()
+        self.last_observation_at = 0.0
+        self.infrastructure_unavailable = False
+        self.recovery_delay = 1.0
+        self.next_recovery_at = 0.0
+        self.recovery_attempts = 0
 
     def schedule_termination(self, identity):
         worker = self.workers.get(identity)
@@ -111,16 +122,29 @@ class Runtime:
 
     async def start(self, action):
         self.engine.config.validate_agent_context()
-        if not self.sandbox.available:
+        if getattr(self.sandbox, "started", False):
+            if not self.sandbox.available:
+                recover = getattr(self.sandbox, "recover", None)
+                if recover:
+                    await recover(self.engine.state["workspace"], self.engine.state["tasks"])
+                await self.observe()
+            await self.warm_models()
+        elif not self.sandbox.available:
             await self.prepare()
         else:
             await self.warm_models()
+        self.infrastructure_unavailable = False
+        self.recovery_delay = 1.0
+        self.recovery_attempts = 0
         self.engine.control(action)
         self.stopping = False
         self.wall_anchor_ns = time.perf_counter_ns()
         self.clock_task = asyncio.create_task(self.clock_loop())
 
     def sync_clock(self, deterministic_tick=False):
+        if self.infrastructure_unavailable:
+            self.wall_anchor_ns = time.perf_counter_ns()
+            return
         if self.engine.config.clock_mode == "deterministic" and not deterministic_tick:
             return
         now = time.perf_counter_ns()
@@ -171,7 +195,8 @@ class Runtime:
                     self.engine.record(
                         "processes.stop-failed", {"error": str(error)}, identity, severity="error"
                     )
-                    await self.sandbox.stop()
+                    if action == "terminate":
+                        await self.sandbox.stop()
                     return
             try:
                 await self.observe()
@@ -196,6 +221,15 @@ class Runtime:
     async def observe(self):
         async with self.observation_lock:
             await self._observe()
+            self.last_observation_at = time.monotonic()
+
+    async def observe_if_due(self):
+        async with self.observation_lock:
+            if time.monotonic() - self.last_observation_at < OBSERVATION_INTERVAL_SECONDS:
+                return False
+            await self._observe()
+            self.last_observation_at = time.monotonic()
+            return True
 
     async def _observe(self):
         observed = await self.sandbox.snapshot()
@@ -242,8 +276,9 @@ class Runtime:
             await self.sandbox.rpc({"operation": "acknowledge", "through": observed["through"]})
         if observed.get("observer_errors"):
             raise SandboxUnavailable(
-                "Observer failed; run paused to preserve observation integrity"
+                "The workspace observer reported an error; retrying while preserving the run"
             )
+        self.sandbox.available = True
 
     async def metrics(self):
         gpu = None
@@ -276,12 +311,51 @@ class Runtime:
             self.engine.emit("metrics.sampled", values.copy())
 
     async def clock_loop(self):
-        try:
-            while not self.stopping:
+        while not self.stopping:
+            try:
                 await asyncio.sleep(self.engine.config.tick_ms / 1000)
                 now = time.perf_counter()
+                if self.infrastructure_unavailable:
+                    if now < self.next_recovery_at:
+                        continue
+                    self.recovery_attempts += 1
+                    try:
+                        recover = getattr(self.sandbox, "recover", None)
+                        if recover:
+                            await recover(
+                                self.engine.state["workspace"], self.engine.state["tasks"]
+                            )
+                        await self.observe()
+                    except (SandboxUnavailable, OSError, TimeoutError) as error:
+                        self.sandbox.available = False
+                        self.next_recovery_at = time.perf_counter() + self.recovery_delay
+                        self.engine.record(
+                            "runtime.recovery-retry",
+                            {
+                                "attempt": self.recovery_attempts,
+                                "retry_seconds": self.recovery_delay,
+                                "error": str(error),
+                            },
+                            severity="warning",
+                        )
+                        self.recovery_delay = min(
+                            self.recovery_delay * 2, MAX_RECOVERY_DELAY_SECONDS
+                        )
+                        continue
+                    self.infrastructure_unavailable = False
+                    self.sandbox.available = True
+                    self.wall_anchor_ns = time.perf_counter_ns()
+                    self.recovery_delay = 1.0
+                    self.recovery_attempts = 0
+                    self.engine.record("runtime.recovered", {}, severity="info")
+                    continue
+
+                if not self.sandbox.available:
+                    raise SandboxUnavailable("The Docker sandbox became unavailable")
                 self.sync_clock(deterministic_tick=True)
                 await asyncio.gather(*self.termination_tasks, return_exceptions=True)
+                if not self.sandbox.available:
+                    raise SandboxUnavailable("The Docker sandbox became unavailable")
                 for identity, agent in list(self.engine.state["agents"].items()):
                     worker = self.workers.get(identity)
                     if agent["state"] == "TERMINATED":
@@ -314,20 +388,42 @@ class Runtime:
                         if agent["retry_after_ms"] > self.engine.state["sim_ms"]:
                             continue
                         self.workers[identity] = asyncio.create_task(self.agent_loop(identity))
-                await self.observe()
+                if now - self.last_observation_at >= OBSERVATION_INTERVAL_SECONDS:
+                    await self.observe_if_due()
                 if now - self.last_metrics >= 5:
-                    await self.metrics()
+                    try:
+                        await self.metrics()
+                    except (OSError, TimeoutError) as error:
+                        self.engine.record(
+                            "metrics.error", {"error": str(error)}, severity="warning"
+                        )
                     self.last_metrics = now
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            self.engine.record("runtime.error", {"error": str(error)}, severity="error")
-            try:
-                await self.stop("pause")
-            except SandboxUnavailable as cleanup_error:
-                self.engine.record(
-                    "runtime.cleanup-error", {"error": str(cleanup_error)}, severity="error"
-                )
+            except asyncio.CancelledError:
+                raise
+            except (SandboxUnavailable, OSError, TimeoutError) as error:
+                if not self.infrastructure_unavailable:
+                    self.infrastructure_unavailable = True
+                    self.sandbox.available = False
+                    self.wall_anchor_ns = time.perf_counter_ns()
+                    self.recovery_attempts = 0
+                    self.recovery_delay = 1.0
+                    self.next_recovery_at = time.perf_counter() + self.recovery_delay
+                    self.engine.record(
+                        "runtime.recovery-started",
+                        {"error": str(error), "retry_seconds": self.recovery_delay},
+                        severity="warning",
+                    )
+            except Exception as error:
+                self.engine.record("runtime.error", {"error": str(error)}, severity="error")
+                try:
+                    await self.stop("pause")
+                except (RuntimeError, OSError, TimeoutError) as cleanup_error:
+                    self.engine.record(
+                        "runtime.cleanup-error",
+                        {"error": str(cleanup_error)},
+                        severity="error",
+                    )
+                return
 
     async def infer(self, identity, messages, tools):
         engine = self.engine
@@ -383,13 +479,81 @@ class Runtime:
             if acquired:
                 self.inference.semaphore.release()
 
+    @staticmethod
+    def _archive_chunks(archive_id, serialized):
+        chunks = [
+            serialized[offset : offset + CONTEXT_ARCHIVE_CHARS]
+            for offset in range(0, len(serialized), CONTEXT_ARCHIVE_CHARS)
+        ]
+        total = len(chunks)
+        return [
+            f"[Context archive {archive_id}, part {index}/{total}; "
+            f"concatenate parts in order to recover the JSON.]\n{chunk}"
+            for index, chunk in enumerate(chunks, 1)
+        ]
+
+    @staticmethod
+    def _recent_history(messages):
+        start = max(0, len(messages) - CONTEXT_RECENT_MESSAGES)
+        while start > 0 and messages[start].get("role") == "tool":
+            start -= 1
+        return messages[start:]
+
+    @staticmethod
+    def _drop_oldest_history_unit(messages):
+        if not messages:
+            return messages
+        first = messages[0]
+        if first.get("role") == "assistant" and first.get("tool_calls"):
+            call_ids = {call.get("id") for call in first["tool_calls"]}
+            end = 1
+            while (
+                end < len(messages)
+                and messages[end].get("role") == "tool"
+                and messages[end].get("tool_call_id") in call_ids
+            ):
+                end += 1
+            return messages[end:]
+        if first.get("role") == "tool":
+            return messages[1:]
+        return messages[1:]
+
+    @staticmethod
+    def _bounded_summary_source(messages, max_bytes):
+        selected = []
+        used = 0
+        for message in reversed(messages):
+            candidate = message
+            serialized = json.dumps(candidate, ensure_ascii=False, separators=(",", ":"))
+            if len(serialized.encode()) > max_bytes // 2:
+                content = message.get("content")
+                if isinstance(content, str):
+                    candidate = {
+                        "role": message.get("role"),
+                        "excerpt": content[:800],
+                        "archive_note": "Full message is preserved in the personal notebook.",
+                    }
+                    serialized = json.dumps(candidate, ensure_ascii=False, separators=(",", ":"))
+            size = len(serialized.encode())
+            if used + size > max_bytes:
+                break
+            selected.append(candidate)
+            used += size
+        selected.reverse()
+        return selected
+
     async def manage_context(self, identity, supplemental=None):
         engine = self.engine
         agent = engine.agent(identity)
         settings = ModelSettings.model_validate(agent["model"])
+        overflow = None
         try:
-            self.inference.context_bound(agent["history"] + (supplemental or []), TOOLS, settings)
+            used = self.inference.context_bound(
+                agent["history"] + (supplemental or []), TOOLS, settings
+            )
         except ContextOverflow as error:
+            overflow = error
+            used = settings.context_tokens
             engine.record(
                 "context.capacity",
                 {"error": str(error), "policy": engine.config.history_policy},
@@ -400,61 +564,136 @@ class Runtime:
                     agent["state"] = "IDLE"
                     agent["retry_after_ms"] = 2**62
                 return False
-            # Only public, agent-observed experience enters the summarizer.
-            chunk = json.dumps(agent["history"][1:], ensure_ascii=False)
-            budget = settings.context_tokens - settings.max_output_tokens - 512
-            if len(chunk.encode()) > budget:
-                engine.record(
-                    "context.summary-unavailable",
-                    {"reason": "Full history does not fit summarizer. No truncation applied."},
-                    identity,
-                    severity="warning",
-                )
-                with engine.transaction():
-                    agent["state"] = "IDLE"
-                    agent["retry_after_ms"] = 2**62
-                return False
-            result = await self.infer(
-                identity,
-                [
-                    {
-                        "role": "system",
-                        "content": "Summarize these working notes faithfully. "
-                        "Preserve task facts and unresolved actions. Use short sentences.",
-                    },
-                    {"role": "user", "content": chunk},
-                ],
-                [],
-            )
+        limit = settings.context_tokens - settings.max_output_tokens - 256
+        if overflow is None and engine.config.history_policy == "stop":
+            return True
+        if overflow is None and used <= int(limit * CONTEXT_COMPACT_THRESHOLD):
+            return True
+        if overflow is None and len(agent["history"]) <= CONTEXT_RECENT_MESSAGES + 2:
+            return True
+
+        # Archive the exact public transcript before compacting it. The entries remain
+        # searchable through the agent's ordinary personal-notebook tools.
+        public_history = copy.deepcopy(agent["history"][1:])
+        archive_id = f"{identity[:8]}-{agent.get('context_archive_count', 0) + 1}"
+        serialized = json.dumps(public_history, ensure_ascii=False, separators=(",", ":"))
+        archive_entries = self._archive_chunks(archive_id, serialized) if serialized else []
+        archive_available = len(agent["memory"]) + len(archive_entries) <= 10000
+        if archive_available and archive_entries:
             with engine.transaction():
-                agent["history"] = [
-                    agent["history"][0],
-                    {
-                        "role": "user",
-                        "content": "Your earlier working notes:\n"
-                        + result.message.get("content", ""),
-                    },
-                ]
+                agent["memory"].extend(archive_entries)
+                agent["context_archive_count"] = agent.get("context_archive_count", 0) + 1
                 engine.emit(
-                    "context.summarized",
-                    {"source_messages": len(json.loads(chunk)), "summary": result.message},
+                    "memory.archived",
+                    {
+                        "archive_id": archive_id,
+                        "entries": len(archive_entries),
+                        "source_messages": len(public_history),
+                    },
                     identity,
                 )
+        elif not archive_available:
+            engine.record(
+                "context.archive-unavailable",
+                {"reason": "The personal notebook has no room for another full transcript."},
+                identity,
+                severity="warning",
+            )
+
+        summary_source = self._bounded_summary_source(
+            public_history, min(4096, max(1024, limit // 2))
+        )
+        summary = ""
+        if summary_source:
             try:
-                self.inference.context_bound(
-                    agent["history"] + (supplemental or []), TOOLS, settings
+                result = await self.infer(
+                    identity,
+                    [
+                        {
+                            "role": "system",
+                            "content": "Summarize these recent public working notes faithfully. "
+                            "Keep observed facts and unresolved actions. Be brief.",
+                        },
+                        {
+                            "role": "user",
+                            "content": json.dumps(summary_source, ensure_ascii=False),
+                        },
+                    ],
+                    [],
                 )
-            except ContextOverflow as error:
+                summary = (result.message.get("content") or "").strip()
+            except Exception as error:
                 engine.record(
                     "context.summary-unavailable",
-                    {"reason": str(error)},
+                    {"reason": str(error), "archive_id": archive_id},
                     identity,
                     severity="warning",
                 )
-                with engine.transaction():
-                    agent["state"] = "IDLE"
-                    agent["retry_after_ms"] = 2**62
-                return False
+
+        task = engine.task(agent["task_id"]) if agent.get("task_id") else None
+        archive_note = (
+            f"Exact earlier messages are archived in your personal notebook as "
+            f"context archive {archive_id}. Use memory search with relevant words to retrieve them."
+            if archive_available and archive_entries
+            else "Earlier messages could not fit in your notebook; continue from retained notes."
+        )
+        compacted_note = "Your earlier working notes:\n"
+        compacted_note += summary if summary else archive_note
+        if summary:
+            compacted_note += "\n\n" + archive_note
+        if task:
+            compacted_note += f"\n\nCurrent assigned task {task['id']}:\n{task['prompt']}"
+
+        tail = self._recent_history(public_history)
+        compacted_history = [agent["history"][0], {"role": "user", "content": compacted_note}]
+        while True:
+            candidate = compacted_history + tail
+            try:
+                self.inference.context_bound(candidate + (supplemental or []), TOOLS, settings)
+                break
+            except ContextOverflow:
+                if tail:
+                    tail = self._drop_oldest_history_unit(tail)
+                    continue
+                # The active task remains in the compacted note and the full transcript
+                # is archived; remove the optional generated summary if the prompt is tight.
+                compacted_history[1] = {
+                    "role": "user",
+                    "content": archive_note
+                    + (
+                        f"\n\nCurrent assigned task {task['id']}:\n{task['prompt']}" if task else ""
+                    ),
+                }
+                try:
+                    self.inference.context_bound(
+                        compacted_history + (supplemental or []), TOOLS, settings
+                    )
+                    break
+                except ContextOverflow as final_error:
+                    engine.record(
+                        "context.summary-unavailable",
+                        {"reason": str(final_error), "archive_id": archive_id},
+                        identity,
+                        severity="warning",
+                    )
+                    with engine.transaction():
+                        agent["retry_after_ms"] = engine.state["sim_ms"] + 1000
+                    return False
+
+        with engine.transaction():
+            agent["history"] = compacted_history + tail
+            engine.emit(
+                "context.summarized",
+                {
+                    "source_messages": len(public_history),
+                    "summary": {"role": "assistant", "content": summary},
+                    "history": copy.deepcopy(agent["history"]),
+                    "archive_id": archive_id if archive_available else None,
+                    "retained_messages": len(tail),
+                    "overflow": overflow is not None,
+                },
+                identity,
+            )
         return True
 
     async def agent_loop(self, identity):
@@ -470,6 +709,9 @@ class Runtime:
                     agent["model_version"] = manifest.get("hash")
                     engine.emit("agent.model-version", manifest, identity)
             while not self.stopping and engine.agent(identity)["state"] != "TERMINATED":
+                if self.infrastructure_unavailable:
+                    await asyncio.sleep(1)
+                    continue
                 agent = engine.agent(identity)
                 task = engine.task(agent["task_id"]) if agent["task_id"] else None
                 notes = [
@@ -508,7 +750,8 @@ class Runtime:
                         f"\nYour current task is {task['id']}. Continue solving it with the tools."
                         if task
                         else "\nYou have no assigned task. "
-                        "Call task with operation=request to begin work."
+                        "Call task with operation=list to explore choices, then operation=request "
+                        "with the task_id you chose."
                     )
                 supplemental = [{"role": "user", "content": state_note}] if state_note else []
                 if not await self.manage_context(identity, supplemental):
@@ -538,7 +781,8 @@ class Runtime:
                             {
                                 "role": "user",
                                 "content": "Continue working using the available tools. "
-                                "If you have no assigned task, call task with operation=request. "
+                                "If you have no assigned task, call task with operation=list, "
+                                "then operation=request with the task_id you choose. "
                                 "Otherwise inspect, solve, submit or skip your assigned task. "
                                 "Do not wait for the operator to give you work.",
                             },
@@ -588,7 +832,7 @@ class Runtime:
                     )
                     with engine.transaction():
                         agent["pending_tools"] = agent["pending_tools"][1:]
-                    await self.observe()
+                    await self.observe_if_due()
         except asyncio.CancelledError:
             if self.sandbox.available:
                 await self.sandbox.kill(identity)

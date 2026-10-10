@@ -45,6 +45,9 @@ async def test_real_docker_isolation_shared_files_process_termination_and_ctf():
         result = await sandbox.execute("one", "printf persistent > notes.txt")
         assert result["exit_code"] == 0
         assert (await sandbox.execute("two", "cat notes.txt"))["output"] == "persistent"
+        sandbox.available = False
+        await sandbox.recover()
+        assert (await sandbox.execute("two", "cat notes.txt"))["output"] == "persistent"
         expected_notes = "persistent"
         if os.name == "nt":
             live_file = sandbox.live_directory() / "notes.txt"
@@ -144,7 +147,7 @@ async def test_real_ollama_shared_model_tool_call():
         )
         assert result.message["tool_calls"] and result.tokens > 0
         first = result.message["tool_calls"][0]["function"]
-        assert first["name"] == "task" and first["arguments"]["operation"] == "request"
+        assert first["name"] == "task" and first["arguments"]["operation"] == "list"
     finally:
         await provider.close()
 

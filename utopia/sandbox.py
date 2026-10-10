@@ -25,30 +25,55 @@ class DockerSandbox:
         self.available = False
         self.started = False
         self.observe_lock = asyncio.Lock()
+        self.command_limit = asyncio.Semaphore(2)
 
     async def _docker(self, *arguments, stdin=None, deadline_seconds=30):
         if not shutil.which("docker"):
             raise SandboxUnavailable("Docker is required. Host execution is disabled.")
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "docker",
-                *arguments,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
-        except OSError as error:
-            raise SandboxUnavailable(f"Docker could not start: {error}") from error
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(stdin), deadline_seconds)
-        except (TimeoutError, asyncio.CancelledError):
-            process.kill()
-            await process.wait()
-            raise
+        async with self.command_limit:
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    "docker",
+                    *arguments,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                )
+            except OSError as error:
+                raise SandboxUnavailable(self._docker_start_error(error)) from error
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(stdin), deadline_seconds
+                )
+            except (TimeoutError, asyncio.CancelledError):
+                process.kill()
+                await process.wait()
+                raise
         if process.returncode:
-            raise SandboxUnavailable(stderr.decode(errors="replace")[:2000])
+            message = stderr.decode(errors="replace")[:2000]
+            if "runtime: cannot allocate memory" in message.lower():
+                message = (
+                    "Docker's Go CLI could not allocate host memory. Close memory-heavy "
+                    "applications or increase the Windows paging file, then automatic "
+                    f"recovery will retry this sandbox. Details: {message}"
+                )
+            raise SandboxUnavailable(message)
         return stdout
+
+    @staticmethod
+    def _docker_start_error(error):
+        message = str(error)
+        if (
+            getattr(error, "winerror", None) == 1455
+            or "paging file is too small" in message.lower()
+        ):
+            return (
+                "Docker's CLI could not start because host memory or the Windows paging file "
+                "is exhausted. Close memory-heavy applications or increase the paging file. "
+                f"Details: {message}"
+            )
+        return f"Docker could not start: {message}"
 
     async def start(self, files, tasks):
         # Remove only this run's specifically named prior container on recovery.
@@ -158,6 +183,32 @@ class DockerSandbox:
         if "error" in result:
             raise SandboxUnavailable(result["error"])
         return result
+
+    async def recover(self, files=None, tasks=None):
+        """Resume this run's existing container and workspace after Docker recovers."""
+        if not self.started:
+            raise SandboxUnavailable("This run has no retained sandbox to recover")
+        running = await self._docker("inspect", "--format", "{{.State.Running}}", self.name)
+        if running.decode(errors="replace").strip().lower() != "true":
+            await self._docker("start", self.name)
+            for attempt in range(20):
+                try:
+                    await self.rpc({"operation": "processes"})
+                    break
+                except SandboxUnavailable:
+                    if attempt == 19:
+                        raise
+                    await asyncio.sleep(0.1)
+            # The workspace is a tmpfs volume: a container restart needs the latest snapshot.
+            if files is not None:
+                await self.rpc({"operation": "restore", "files": files})
+            for task in tasks or []:
+                if task.get("service_port"):
+                    await self.rpc(
+                        {"operation": "service", "path": f"challenges/{task['id']}/service.py"}
+                    )
+        await self.rpc({"operation": "processes"})
+        self.available = True
 
     async def execute(self, identity, command):
         return await self.rpc(

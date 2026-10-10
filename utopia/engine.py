@@ -7,7 +7,7 @@ import uuid
 from contextlib import contextmanager
 
 from utopia.config import ModelSettings, WorldConfig
-from utopia.grader import GradeKind, Grader
+from utopia.grader import Grade, GradeKind, Grader
 from utopia.tasks import generate_tasks, public_task
 
 LIVING = {"SPAWNING", "ACTIVE", "WORKING", "IDLE", "RELAX", "SKIPPING", "RESPAWNING"}
@@ -324,7 +324,31 @@ class Engine:
             None,
         )
 
-    def request_task(self, identity):
+    def task_choices(self, identity, offset=0):
+        agent = self._living(identity)
+        skipped = {t["task_id"] for t in agent["task_history"] if t["result"] == "skipped"}
+        eligible = [
+            task
+            for task in self.state["tasks"]
+            if task["status"] == "AVAILABLE" and task["id"] not in skipped
+        ]
+        offset = max(0, int(offset))
+        return {
+            "tasks": [
+                {
+                    "id": task["id"],
+                    "category": task["category"],
+                    "description": task["prompt"][:180],
+                    "reward_multiplier": task["reward_multiplier"],
+                }
+                for task in eligible[offset : offset + 6]
+            ],
+            "total": len(eligible),
+            "next_offset": offset + 6 if offset + 6 < len(eligible) else None,
+            "instruction": "Choose with operation=request and task_id. Use offset to browse.",
+        }
+
+    def request_task(self, identity, task_id=None):
         with self.transaction():
             agent = self._living(identity)
             if agent["task_id"]:
@@ -332,8 +356,26 @@ class Engine:
                 if current["status"] == "ASSIGNED" and current["assigned_to"] == identity:
                     agent["state"] = "WORKING"
                     return public_task(current)
-            available = self.available_task(identity)
+            available = (
+                self.available_task(identity)
+                if task_id is None
+                else next(
+                    (
+                        task
+                        for task in self.state["tasks"]
+                        if task["id"] == task_id
+                        and task["status"] == "AVAILABLE"
+                        and not any(
+                            item["task_id"] == task_id and item["result"] == "skipped"
+                            for item in agent["task_history"]
+                        )
+                    ),
+                    None,
+                )
+            )
             if available is None:
+                if task_id is not None:
+                    return {"error": "That task is unavailable. List tasks and choose another."}
                 agent["state"] = "IDLE"
                 return {"status": "No untried task is currently available"}
             available.update(status="ASSIGNED", assigned_to=identity)
@@ -341,6 +383,7 @@ class Engine:
                 task_id=available["id"],
                 task_started_charge_ms=agent["total_charge_ms"],
                 task_relax_charge_ms=0,
+                task_reflections=[],
                 state="WORKING",
             )
             self.emit("task.assigned", {"task": public_task(available)}, identity, available["id"])
@@ -363,6 +406,8 @@ class Engine:
                 if self.config.economy.repeated_skip_multiplication
                 else 2,
             )
+            if task["category"] == "exploration":
+                task["reward_multiplier"] = 2
             task.update(status="AVAILABLE", assigned_to=None)
             agent["task_history"].append(
                 dict(task_id=task["id"], result="skipped", sim_ms=self.state["sim_ms"])
@@ -410,7 +455,13 @@ class Engine:
                     "error",
                 )
                 return {"error": "Task environment unavailable; submission was not graded"}
-            grade = self.grader.grade(task, answer, self.config.allow_impossibility_proofs)
+            if task["category"] == "exploration":
+                if len(agent.get("task_reflections", [])) < 3:
+                    return {"error": "Record three distinct nonempty thoughts using reflect first."}
+                task["reward_multiplier"] = 2
+                grade = Grade(GradeKind.CORRECT, "Three distinct thought reflections recorded")
+            else:
+                grade = self.grader.grade(task, answer, self.config.allow_impossibility_proofs)
             self.emit(
                 "grader.outcome",
                 {"kind": grade.kind, "answer": answer, "detail": grade.detail},
@@ -584,10 +635,21 @@ class Engine:
                 agent["memory"].append(text)
                 self.emit("memory.written", {"text": text, "source": "self-reflection"}, identity)
             self.emit("agent.expression", entry, identity, agent["task_id"])
-            return {
+            progress = {}
+            if agent["task_id"] and self.task(agent["task_id"])["category"] == "exploration":
+                thoughts = agent.setdefault("task_reflections", [])
+                normalized = " ".join(thought.lower().split())
+                if normalized and normalized not in thoughts:
+                    thoughts.append(normalized)
+                progress["reflections"] = len(thoughts)
+            result = {
                 "status": "Reflection recorded",
                 "notebook_saved": len(agent["memory"]) < 10000 or text in agent["memory"],
+                **progress,
             }
+        if progress.get("reflections", 0) >= 3:
+            result["completion"] = self.submit(identity, "reflected")
+        return result
 
     def recall(self, identity, query="", limit=5):
         agent = self.agent(identity)

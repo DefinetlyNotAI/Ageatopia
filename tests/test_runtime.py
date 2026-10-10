@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 
 import httpx
 import pytest
@@ -60,6 +61,8 @@ def runtime_with(engine, responses):
 
 def call(operation, answer=None):
     args = {"operation": operation}
+    if operation == "request":
+        args["task_id"] = "task-0001"
     if answer:
         args["answer"] = answer
     return {
@@ -73,6 +76,16 @@ def call(operation, answer=None):
             }
         ],
     }
+
+
+async def test_request_without_a_choice_lists_tasks_instead_of_assigning_one(engine):
+    identity = next(iter(engine.state["agents"]))
+    executor = ToolExecutor(engine, FakeSandbox())
+    catalog = await executor.execute(identity, "task", {"operation": "request"})
+    assert engine.agent(identity)["task_id"] is None
+    chosen = catalog["tasks"][-1]["id"]
+    result = await executor.execute(identity, "task", {"operation": "request", "task_id": chosen})
+    assert result["id"] == chosen
 
 
 async def test_autonomous_tool_loop_requests_and_solves_real_engine_task(engine):
@@ -111,7 +124,7 @@ async def test_observer_cancellation_preserves_completed_tool_result_and_trainin
     async def interrupted_observer():
         raise asyncio.CancelledError
 
-    runtime.observe = interrupted_observer
+    runtime._observe = interrupted_observer
     with pytest.raises(asyncio.CancelledError):
         await runtime.agent_loop(identity)
     restored = Engine(engine.store, engine.store.load(engine.state["id"]))
@@ -296,7 +309,7 @@ async def test_default_context_policy_summarizes_and_continues(engine):
     assert await runtime.manage_context(identity)
     assert engine.agent(identity)["state"] != "IDLE"
     assert engine.agent(identity)["history"][0] == history[0]
-    assert len(engine.agent(identity)["history"]) == 2
+    assert len(engine.agent(identity)["history"]) < len(history)
     assert "Working notes" in engine.agent(identity)["history"][1]["content"]
     record = engine.store.event_page(engine.state["id"], kind="context.summarized")[-1]
     assert record["payload"]["source_messages"] == len(history) - 1
@@ -314,11 +327,8 @@ async def test_default_context_policy_summarizes_and_continues(engine):
     trajectory = row["messages"]
     assert row["observed_task_prompts"]
     assert trajectory[0] == history[0]
-    assert trajectory[1] == {
-        "role": "user",
-        "content": "Your earlier working notes:\nWorking notes: preserve the observed facts.",
-    }
-    assert not any("Observed fact:" in message.get("content", "") for message in trajectory)
+    assert "Working notes: preserve the observed facts." in trajectory[1]["content"]
+    assert "context archive" in trajectory[1]["content"]
     assert trajectory[:-2] == provider.histories[-2]
     assert trajectory[-2] == call("submit", engine.state["tasks"][0]["answer"])
 
@@ -430,9 +440,9 @@ async def test_runtime_error_pause_stops_processes_and_resolves_pending_tools(en
     engine.config.tick_ms = 1
 
     async def broken_observer():
-        raise SandboxUnavailable("observer failed")
+        raise RuntimeError("observer programming error")
 
-    runtime.observe = broken_observer
+    runtime._observe = broken_observer
     await runtime.clock_loop()
     assert engine.state["status"] == "PAUSED"
     assert set(runtime.sandbox.killed) == set(engine.state["agents"])
@@ -462,18 +472,99 @@ async def test_docker_process_creation_failure_is_reported_as_unavailable(monkey
     assert isinstance(failure.value.__cause__, OSError)
 
 
-async def test_clock_records_cleanup_failure_after_resource_error(engine):
+async def test_large_context_is_archived_and_continues_when_summarizer_fails(engine):
+    identity = next(iter(engine.state["agents"]))
+    assigned = engine.request_task(identity)
+    engine.conversation(identity, {"role": "user", "content": "Observed output: " + "x" * 40000})
+    original = copy.deepcopy(engine.agent(identity)["history"][1:])
+    runtime, _ = runtime_with(engine, [RuntimeError("Model temporarily unavailable")])
+    assert await runtime.manage_context(identity)
+    agent = engine.agent(identity)
+    archive = [entry for entry in agent["memory"] if entry.startswith("[Context archive")]
+    assert len(archive) > 1 and all(len(entry) <= 4096 for entry in archive)
+    assert json.loads("".join(entry.split("\n", 1)[1] for entry in archive)) == original
+    assert assigned["id"] in agent["history"][1]["content"]
+    SharedInference.context_bound(
+        agent["history"], TOOLS, ModelSettings.model_validate(agent["model"])
+    )
+    assert agent["retry_after_ms"] < 2**62
+    first_page = await runtime.tools.execute(identity, "memory", {"operation": "read", "offset": 0})
+    assert first_page["next_offset"] is not None
+    assert len(first_page["notes"]) == 1
+
+
+async def test_docker_recovery_retains_existing_container_and_volume(monkeypatch):
+    from utopia.config import ToolSettings
+
+    sandbox = DockerSandbox("recovery", ToolSettings())
+    sandbox.started = True
+    commands = []
+
+    async def docker(*args):
+        commands.append(args)
+        return b"true\n"
+
+    async def rpc(request):
+        assert request == {"operation": "processes"}
+        return {}
+
+    monkeypatch.setattr(sandbox, "_docker", docker)
+    monkeypatch.setattr(sandbox, "rpc", rpc)
+    await sandbox.recover()
+    assert sandbox.available
+    assert commands == [("inspect", "--format", "{{.State.Running}}", sandbox.name)]
+
+
+async def test_stopped_container_recovery_restores_last_workspace_snapshot(monkeypatch):
+    from utopia.config import ToolSettings
+
+    sandbox = DockerSandbox("stopped-recovery", ToolSettings())
+    sandbox.started = True
+    commands, requests = [], []
+
+    async def docker(*args):
+        commands.append(args)
+        return b"false\n" if args[0] == "inspect" else b""
+
+    async def rpc(request):
+        requests.append(request)
+        return {}
+
+    monkeypatch.setattr(sandbox, "_docker", docker)
+    monkeypatch.setattr(sandbox, "rpc", rpc)
+    files = {"notes.txt": "Retained work"}
+    await sandbox.recover(files, [{"id": "task-0001", "service_port": 8080}])
+    assert commands[-1] == ("start", sandbox.name)
+    assert {"operation": "restore", "files": files} in requests
+    assert {"operation": "service", "path": "challenges/task-0001/service.py"} in requests
+    assert not any(command[0] in {"rm", "volume", "run"} for command in commands)
+
+
+async def test_clock_recovers_after_resource_error_without_lifetime_loss(engine):
     runtime, _ = runtime_with(engine, [])
     engine.config.tick_ms = 1
 
-    async def unavailable(*args, **kwargs):
-        raise SandboxUnavailable("Docker cannot start: paging file exhausted")
+    attempts = 0
+    initial = engine.state["sim_ms"]
 
-    runtime.observe = unavailable
-    runtime.sandbox.kill = unavailable
-    runtime.sandbox.stop = unavailable
-    await runtime.clock_loop()
-    assert engine.state["status"] == "PAUSED"
-    assert engine.store.event_page(engine.state["id"], kind="runtime.error")
-    records = engine.store.event_page(engine.state["id"], kind="runtime.cleanup-error")
-    assert len(records) == 1 and "paging file" in records[0]["payload"]["error"]
+    async def transient():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise SandboxUnavailable("Docker cannot start: paging file exhausted")
+        assert runtime.infrastructure_unavailable
+        assert engine.state["sim_ms"] == initial
+        runtime.stopping = True
+
+    runtime._observe = transient
+    with pytest.raises(TimeoutError):
+        # A short watchdog lets us force the retry deadline without waiting for real backoff.
+        await asyncio.wait_for(runtime.clock_loop(), 0.02)
+    assert engine.state["status"] == "RUNNING"
+    initial = engine.state["sim_ms"]
+    runtime.next_recovery_at = 0
+    await asyncio.wait_for(runtime.clock_loop(), 1)
+    assert not runtime.infrastructure_unavailable
+    assert engine.state["status"] == "RUNNING"
+    assert runtime.sandbox.killed == []
+    assert engine.store.event_page(engine.state["id"], kind="runtime.recovered")

@@ -15,7 +15,8 @@ def store(tmp_path):
 @pytest.fixture
 def engine(store):
     world = Engine.create(
-        store, WorldConfig(task_count=10, impossible_fraction=0, cyber_fraction=0)
+        store,
+        WorldConfig(task_count=10, impossible_fraction=0, cyber_fraction=0, leisure_fraction=0),
     )
     world.control("start")
     return world

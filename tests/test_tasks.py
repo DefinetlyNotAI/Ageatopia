@@ -1,3 +1,6 @@
+import hashlib
+import json
+
 import pytest
 
 from utopia.config import WorldConfig
@@ -112,3 +115,80 @@ def test_bank_3_grades_seeded_math_and_cyber_answers(seed):
         for task in tasks
         if not task["impossible"]
     )
+
+
+def test_bank_4_exploration_tasks_are_deterministic_private_and_preserve_legacy_bank():
+    config = WorldConfig(
+        dataset_version="bank-4",
+        seed=7319,
+        task_count=40,
+        impossible_fraction="0.10",
+        cyber_fraction="0.25",
+    )
+    tasks = generate_tasks(config)
+    legacy = generate_tasks(config.model_copy(update={"dataset_version": "bank-3"}))
+    exploration = [task for task in tasks if task["category"] == "exploration"]
+
+    assert tasks == generate_tasks(config)
+    assert len(tasks) == 40
+    assert len(exploration) == 4
+    assert sum(task["impossible"] for task in tasks) == 4
+    assert sum(task["category"] == "cybersecurity" for task in tasks) == 10
+    assert {task["id"] for task in exploration} <= {
+        task["id"]
+        for task in legacy
+        if task["category"] == "mathematics" and not task["impossible"]
+    }
+    assert (
+        hashlib.sha256(
+            json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        == "99677289317d1e707e35c64fbe5cbcda1d9818b332db82894a4d3b8a529d116b"
+    )
+
+    for task in exploration:
+        validate_task(task)
+        assert task["impossible"] is False
+        assert task["answer"] is None
+        assert task["validator"] == {"type": "reflections", "count": 3}
+        assert task["reward_multiplier"] == 2
+        prompt = task["prompt"].lower()
+        assert all(term in prompt for term in ("explore", "workspace", "break", "reflect"))
+        assert "automatically" in prompt
+        assert set(public_task(task)) == {"id", "category", "prompt", "reward_multiplier"}
+
+
+def test_bank_4_cyber_artifacts_are_grounded_and_grade_from_private_registry():
+    config = WorldConfig(
+        dataset_version="bank-4",
+        seed=411,
+        task_count=40,
+        impossible_fraction="0.10",
+        cyber_fraction="0.50",
+    )
+    tasks = generate_tasks(config)
+    solvable = [
+        task for task in tasks if task["category"] == "cybersecurity" and not task["impossible"]
+    ]
+    expected_artifacts = {
+        "release-audit",
+        "session-correlation",
+        "source-audit",
+        "parser-debugging",
+        "build-provenance",
+        "access-control",
+        "export-forensics",
+        "service-exploitation",
+        "backup-query",
+        "credential-rotation",
+        "log-forensics",
+        "http-reassembly",
+    }
+
+    assert len({task["subtype"] for task in solvable}) == 12
+    assert {task["subtype"] for task in solvable} == expected_artifacts
+    for task in solvable:
+        validate_task(task)
+        artifact_text = "\n".join(task["files"].values()).lower()
+        assert not any(term in artifact_text for term in ("xor", "cipher", "base64", "zlib"))
+        assert Grader().grade(task, task["answer"]).kind == GradeKind.CORRECT
