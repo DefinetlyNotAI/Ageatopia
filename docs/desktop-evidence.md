@@ -841,3 +841,51 @@ containers remained after shutdown; explicit unloading of only the two benchmark
 tags left Ollama's loaded-model list empty. The existing RELAX and recurring bonus
 regression checks passed again (four targeted engine/runtime tests); application
 source was unchanged.
+
+## Default-model batching and concurrency, 2026-10-10
+
+The current default qwen3.5:2b tag is Q8_0, digest
+0689d44085e06d165161a8a9a1731344278cfb5aade63a3c3dbdb48ab54b130a.
+The existing latency command measured the actual current base context and tool
+schema (1289 prompt tokens, 26 output tokens, one parsed tool call) after explicit
+unload and same-settings preload at each batch size:
+
+| Prompt batch | Preload wall ms | First request / first output ms | First prompt evaluation ms | Cached repeat / first output ms |
+| --- | ---: | ---: | ---: | ---: |
+| 256 | 5603 | 936 / 922 | 473 | 481 / 464 |
+| 512 | 3038 | 820 / 802 | 390 | 477 / 455 |
+| 1024 | 3086 | 816 / 795 | 378 | 468 / 450 |
+
+Reports are default-batch256-latency.json, default-batch512-latency.json and
+default-batch1024-latency.json under .data/training-verification. These are short
+initial-prompt measurements. The small batch-size benefit does not outweigh prior
+full-simulation memory-pressure evidence for retaining the conservative default
+256. There is no ten-second delay in these post-preload requests; physical loading
+still takes time and is excluded from charged simulation work.
+
+A separate probe used the six actual public context profiles, the current base
+context and real tool schema with temperature zero. Four alternating client
+concurrency rounds (1, 2, 1, 2) each preloaded after unloading. On the existing
+server the six-request batch durations were 3589, 3473, 3598 and 3485 ms. Each
+request returned one tool call. This probe does not execute tools or grade tasks.
+
+An owned temporary Ollama 0.40.1 server on loopback port 11435 then repeated the
+probe with process-local OLLAMA_NUM_PARALLEL=2 and LLAMA_ARG_CACHE_RAM=1024MiB.
+Durations were 3640, 3503, 3640 and 3530 ms. Its actual scheduler log reported
+that qwen35 does not currently support parallel requests and initialized exactly
+one slot, despite the requested two. Concurrent clients therefore mostly move
+waiting into Ollama: later individual request latency rose from roughly 550 ms
+to roughly 1050 ms. The application retains its single-request default, while
+the existing operator configuration permits concurrency for supported workloads.
+See the [upstream concurrency documentation](https://docs.ollama.com/faq).
+
+Both probes reported all 2383486646 model bytes in GPU memory, context 8192 and
+indefinite residency. Reports default-concurrency-probe.json and
+owned-server-parallel-two-probe.json and the actual parallel-two-server.log are
+retained. Only the tested model was unloaded; the owned server was terminated.
+The owned port was closed and the external provider had no loaded models afterward.
+
+Current verification after these probes: 116 standard Python tests passed, three
+real-provider tests deselected; Ruff check and formatting passed. Dashboard lint,
+TypeScript checking and production build passed. No application source or default
+configuration changed in this performance verification slice.
