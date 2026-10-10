@@ -7,6 +7,20 @@ from textual.widgets import TextArea
 
 from utopia.control import ControlApp
 from utopia.desktop import ProcessSupervisor, validate_config
+from utopia.maintenance import MaintenanceApp
+
+
+async def test_maintenance_command_palette_and_exit(tmp_path):
+    path = tmp_path / "desktop.json"
+    path.write_text(json.dumps({"data_dir": str(tmp_path)}), encoding="utf-8")
+    app = MaintenanceApp(path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        assert len(app.screen_stack) == 2
+        await pilot.press("escape")
+        app._write("Successfully installed example [literal]")
+        await pilot.press("ctrl+c")
 
 
 async def test_control_room_saves_model_server_settings(tmp_path):

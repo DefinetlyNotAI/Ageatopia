@@ -8,10 +8,11 @@ import sys
 from pathlib import Path
 
 import httpx
+from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import Button, Footer, Header, Input, Label, LoadingIndicator, Log, Static
+from textual.widgets import Button, Footer, Header, Input, Label, LoadingIndicator, RichLog, Static
 
 from utopia.desktop import DEFAULT_CONFIG, ROOT, load_config, setup_logging
 
@@ -52,14 +53,24 @@ class MaintenanceApp(App):
             yield Button("Pull model", id="model-pull")
             yield LoadingIndicator(id="busy")
         yield Label("Commands and diagnostic output", id="activity")
-        yield Log(id="maintenance-log", auto_scroll=True, max_lines=1000)
+        yield RichLog(id="maintenance-log", auto_scroll=True, max_lines=1000, wrap=True)
         yield Footer()
 
     def on_mount(self):
         self.query_one("#busy", LoadingIndicator).display = False
+        self.query_one("#maintenance-log").border_title = "Maintenance output"
 
     def _write(self, message, level=logging.INFO):
-        self.query_one("#maintenance-log", Log).write_line(message)
+        style = "red" if level >= logging.ERROR or message.startswith("ERROR") else ""
+        if not style and message.startswith(("WARNING", "WARNING:")):
+            style = "yellow"
+        elif not style and message.startswith(("Successfully", "Requirement already satisfied")):
+            style = "green"
+        elif not style and message.startswith(
+            ("[", "Collecting", "Downloading", "Installing", "Building")
+        ):
+            style = "cyan"
+        self.query_one("#maintenance-log", RichLog).write(Text(message, style=style))
         self.logger.log(level, message)
 
     def _finish(self, message, failed=False):
@@ -70,11 +81,11 @@ class MaintenanceApp(App):
 
     def on_button_pressed(self, event):
         try:
-            self._dispatch_action(event.button.id)
+            self._handle_maintenance_action(event.button.id)
         except (OSError, RuntimeError) as error:
             self._finish(str(error), failed=True)
 
-    def _dispatch_action(self, action):
+    def _handle_maintenance_action(self, action):
         if action == "install":
             self._run_steps(
                 "Installing project dependencies",
