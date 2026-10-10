@@ -1028,6 +1028,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance, PWSTR comman
     }
 
     ShowWindow(window, showCommand);
+    ShowWindow(window, SW_MAXIMIZE);
     UpdateWindow(window);
 
     environmentHandler = CreateEnvironmentHandler(&g_app);
