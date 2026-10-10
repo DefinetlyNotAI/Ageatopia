@@ -55,7 +55,18 @@ export async function api<T>(path: string, method = "GET", body?: unknown): Prom
     body: body ? JSON.stringify(body) : undefined });
   if (!response.ok) {
     const result = await response.json().catch(() => ({ detail: `Request failed (${response.status})` }));
-    throw new Error(typeof result.detail === "string" ? result.detail : JSON.stringify(result.detail));
+    const fallback = `Request failed (${response.status}). Please try again.`;
+    const detail = result.detail;
+    const message = typeof detail === "string" ? detail : Array.isArray(detail)
+      ? detail.map((issue: { loc?: (string | number)[]; msg?: string }) => {
+        const field = issue.loc?.filter(part => part !== "body").join(" → ");
+        const text = issue.msg?.replace(/^Value error, /, "") || "Invalid value";
+        if (text === "Task count must yield an exact impossible-task distribution") {
+          return "Task count × impossible fraction must be a whole number. With 10% impossible tasks, use a multiple of 10 (for example, 70 or 80 instead of 75).";
+        }
+        return field ? `${field.replaceAll("_", " ")}: ${text}` : text;
+      }).join("\n") : fallback;
+    throw new Error(message || fallback);
   }
   return response.json() as Promise<T>;
 }

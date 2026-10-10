@@ -52,7 +52,7 @@ The centralized terminal control room configures worlds, launches the desktop,
 controls simulation lifecycle, shows status and structured logs, and confirms erasure:
 
 ```powershell
-.\.venv\Scripts\python.exe -m utopia.control
+python -m utopia.control
 ```
 
 `utopia-maintenance` and `utopia-control` are separate installed console commands.
@@ -71,7 +71,7 @@ Closing the standalone desktop unloads models and stops the Ollama server it own
 For development, the backend can still run separately:
 
 ```powershell
-.\.venv\Scripts\python.exe -m utopia.cli
+python -m utopia.cli
 ```
 
 Start the dashboard in another:
@@ -229,9 +229,9 @@ Streamed inference records first output, model load,
 prompt evaluation and generation timings. Measure this machine using:
 
 ```powershell
-.\.venv\Scripts\python.exe -m utopia.latency --repeat 5
+python -m utopia.latency --repeat 5
 # Explicitly unload the selected model before measuring cold warmup:
-.\.venv\Scripts\python.exe -m utopia.latency --cold --repeat 5
+python -m utopia.latency --cold --repeat 5
 ```
 
 See [desktop verification and learning evaluation](docs/desktop-evidence.md).
@@ -255,8 +255,8 @@ answers or impossibility labels. Personal notebooks and shared files do not modi
 model weights. LoRA training is a separate, explicitly invoked command:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -e '.[training]'
-.\.venv\Scripts\python.exe -m utopia.train --dataset trajectories.jsonl --model LOCAL_MODEL_PATH --output .data/adapter-1
+python -m pip install -e '.[training]'
+python -m utopia.train --dataset trajectories.jsonl --model LOCAL_MODEL_PATH --output .data/adapter-1
 ```
 
 Hardware and model support determine whether training fits; use a separate GPU or
@@ -306,7 +306,7 @@ Compare an adapter with its unchanged base on held-out math answers before selec
 it for inference:
 
 ```powershell
-.\.venv\Scripts\python.exe -m utopia.evaluate_adapter --adapter .data/adapter-1 --training-data trajectories.jsonl --model LOCAL_MODEL_PATH --output .data/adapter-1-evaluation.json
+python -m utopia.evaluate_adapter --adapter .data/adapter-1 --training-data trajectories.jsonl --model LOCAL_MODEL_PATH --output .data/adapter-1-evaluation.json
 ```
 
 Supply every training dataset in the adapter's lineage after `--training-data`.
@@ -368,9 +368,9 @@ automatically. See `docs/desktop-evidence.md` for actual deployment results.
 Tests are added after implementation, following the supplied plan.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m ruff check utopia sandbox tests
-.\.venv\Scripts\python.exe -m ruff format --check utopia sandbox tests
+python -m pytest
+python -m ruff check utopia sandbox tests
+python -m ruff format --check utopia sandbox tests
 cd dashboard
 npm run typecheck
 npm run lint

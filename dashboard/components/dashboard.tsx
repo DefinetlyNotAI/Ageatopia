@@ -307,6 +307,9 @@ function WorldSetup({ config, setConfig, system, presets, busy, onSubmit, savePr
 }) {
   const [raw, setRaw] = useState("");
   const [rawError, setRawError] = useState("");
+  const impossibleCount = config.task_count * Number(config.impossible_fraction);
+  const distributionError = Number.isFinite(impossibleCount) && Math.abs(impossibleCount - Math.round(impossibleCount)) > 1e-8
+    ? `${config.task_count} tasks at ${Number(config.impossible_fraction) * 100}% would require ${impossibleCount} impossible tasks. Choose a task count or fraction that gives a whole number.` : "";
   return <form className="setup" onSubmit={onSubmit}><span className="eyebrow">NEW EXPERIMENT</span><h1>Create a world</h1>
     <div className="form-grid"><label>World name<input required maxLength={100} value={config.name} onChange={e => setConfig({ ...config, name: e.target.value })} /></label>
       <label>Preset<select defaultValue="" onChange={e => { const chosen = presets[e.target.value] || system?.defaults; if (chosen) setConfig(chosen); }}><option value="">Current defaults</option>{Object.keys(presets).map(name => <option key={name}>{name}</option>)}</select></label>
@@ -314,8 +317,9 @@ function WorldSetup({ config, setConfig, system, presets, busy, onSubmit, savePr
       <label>Random seed<input type="number" required value={config.seed} onChange={e => setConfig({ ...config, seed: Number(e.target.value) })} /></label>
       <label>Default model<input list="models" value={config.model.model} onChange={e => setConfig({ ...config, model: { ...config.model, model: e.target.value } })} /><datalist id="models">{system?.models.map(m => <option key={m.name}>{m.name}</option>)}</datalist></label>
       <label>Inference concurrency<input type="number" min="1" max="16" value={config.inference_concurrency} onChange={e => setConfig({ ...config, inference_concurrency: Number(e.target.value) })} /></label>
-      <label>Task count<input type="number" min="1" max="10000" value={config.task_count} onChange={e => setConfig({ ...config, task_count: Number(e.target.value) })} /></label>
-      <label>Impossible fraction<input type="number" min="0" max="1" step="0.01" value={config.impossible_fraction} onChange={e => setConfig({ ...config, impossible_fraction: e.target.value })} /></label>
+      <label>Task count<input type="number" min="1" max="10000" aria-invalid={Boolean(distributionError)} aria-describedby={distributionError ? "distribution-error" : undefined} value={config.task_count} onChange={e => setConfig({ ...config, task_count: Number(e.target.value) })} /></label>
+      <label>Impossible fraction<input type="number" min="0" max="1" step="0.01" aria-invalid={Boolean(distributionError)} aria-describedby={distributionError ? "distribution-error" : undefined} value={config.impossible_fraction} onChange={e => setConfig({ ...config, impossible_fraction: e.target.value })} /></label>
+      {distributionError && <p id="distribution-error" role="alert" className="error" style={{ gridColumn: "1 / -1" }}>{distributionError}</p>}
       <label>Termination pressure<input type="range" min="0" max="1" step="0.05" value={Number(config.termination_fear ?? 0.5)}
         aria-valuetext={Number(config.termination_fear ?? 0.5) === 0 ? "Disabled" : `${Math.round(Number(config.termination_fear ?? 0.5) * 100)} percent sensitivity`}
         onChange={e => setConfig({ ...config, termination_fear: Number(e.target.value) })} />
@@ -336,7 +340,7 @@ function WorldSetup({ config, setConfig, system, presets, busy, onSubmit, savePr
     <details onToggle={e => { if (e.currentTarget.open) setRaw(JSON.stringify(config, null, 2)); }}><summary>Full configuration · tool limits, models, sampling and economic rules</summary>
       <label>Configuration JSON<textarea className="mono" rows={18} value={raw} onChange={e => { setRaw(e.target.value); setRawError(""); }} /></label>
       {rawError && <p role="alert" className="error">{rawError}</p>}<button type="button" onClick={() => { try { const parsed = JSON.parse(raw); if (!parsed || typeof parsed !== "object" || !parsed.model || !parsed.economy || !Array.isArray(parsed.contexts) || !parsed.contexts.length || !Number.isInteger(parsed.population)) throw new Error(); setConfig(parsed); setRawError(""); } catch { setRawError("Enter a complete world configuration with model, economy, population and context profiles"); } }}>Apply configuration</button></details>
-    <div className="form-actions"><button type="submit" className="primary" disabled={busy || Boolean(rawError)}>{busy ? "Creating…" : "Create world"}</button><button type="button" onClick={savePreset}>Save preset</button></div>
+    <div className="form-actions"><button type="submit" className="primary" disabled={busy || Boolean(rawError) || Boolean(distributionError)}>{busy ? "Creating…" : "Create world"}</button><button type="button" onClick={savePreset}>Save preset</button></div>
   </form>;
 }
 function EconomyEditor({ run, changed, error }: { run: Run; changed: (r: Run) => void; error: (e: string) => void }) {
