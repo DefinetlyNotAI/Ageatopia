@@ -2,8 +2,11 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import httpx
+
+from utopia.resources import MemoryGuard, MemoryPressure
 
 
 class ContextOverflow(RuntimeError):
@@ -29,6 +32,42 @@ class SharedInference:
         self.waiting = 0
         self.active = 0
         self.client = httpx.AsyncClient(timeout=180, trust_env=False)
+        self.model_sizes = {}
+        self.memory_needed_mb = 0
+
+    async def check_model_memory(self, settings):
+        try:
+            await self._check_model_memory(settings)
+            self.memory_needed_mb = 0
+        except MemoryPressure as error:
+            self.memory_needed_mb = error.allocation_mb
+            raise
+
+    async def _check_model_memory(self, settings):
+        guard = MemoryGuard()
+        guard.check()
+        key = (settings.base_url.rstrip("/"), settings.model)
+        if (
+            settings.provider != "ollama"
+            or urlparse(settings.base_url).hostname not in {"localhost", "127.0.0.1", "::1"}
+            or key not in self.model_sizes
+        ):
+            return
+        response = await self.client.get(f"{key[0]}/api/ps")
+        response.raise_for_status()
+        loaded = next(
+            (
+                model
+                for model in response.json().get("models", [])
+                if model.get("name") == settings.model
+            ),
+            None,
+        )
+        if loaded and loaded.get("context_length", 0) >= settings.context_tokens:
+            guard.check(256)
+            return
+        # Cold loads may use CPU RAM even when GPU offloading is requested.
+        guard.check(self.model_sizes[key] + max(512, settings.context_tokens // 8))
 
     @staticmethod
     def _ollama_options(settings):
@@ -131,6 +170,9 @@ class SharedInference:
             )
             if model is None:
                 raise ValueError(f"Model {settings.model} is not installed in Ollama")
+            self.model_sizes[(settings.base_url.rstrip("/"), settings.model)] = (
+                model.get("size", 0) + 1048575
+            ) // 1048576
             return {"model": settings.model, "hash": model["digest"], "provider": "ollama"}
         response = await self.client.get(f"{settings.base_url.rstrip('/')}/v1/models")
         response.raise_for_status()
@@ -144,6 +186,7 @@ class SharedInference:
         }
 
     async def chat(self, settings, messages, tools):
+        await self.check_model_memory(settings)
         self.context_bound(messages, tools, settings)
         started = time.perf_counter()
         base = settings.base_url.rstrip("/")
@@ -229,6 +272,7 @@ class SharedInference:
         )
 
     async def warm(self, settings):
+        await self.check_model_memory(settings)
         if settings.provider != "ollama":
             raise ValueError("Model warming is supported only by Ollama")
         started = time.perf_counter()
@@ -255,9 +299,16 @@ class SharedInference:
             self.waiting -= 1
         self.active += 1
         try:
+            while True:
+                try:
+                    await self.check_model_memory(settings)
+                    break
+                except MemoryPressure:
+                    await asyncio.sleep(0.5)
             return await self._embeddings(settings, texts)
         finally:
             self.active -= 1
+            self.memory_needed_mb = 0
             self.semaphore.release()
 
     async def _embeddings(self, settings, texts):

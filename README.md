@@ -68,6 +68,30 @@ Zero disables this cache. It applies only when the launcher starts its own Ollam
 server. Set `manage_ollama` to `false` when using an independently managed provider.
 Closing the standalone desktop unloads models and stops the Ollama server it owns.
 
+Memory safety is enabled by default. `ram_reserve_mb` in `.data/desktop.json`
+defaults to `2048`; the RAM reserve is the greater of this value and 15% of physical RAM.
+Windows commit headroom must also retain `ram_reserve_mb`. New sandbox/model work is
+blocked when its additional budget would consume this reserve. Cold local Ollama loads
+are checked conservatively against model file size plus a context allowance; local
+inference is serialized. Managed Ollama keeps at most one model and one parallel request.
+An existing external Ollama server is never reconfigured or forcibly unloaded.
+
+`process_memory_mb` defaults to `4096`. On Windows the launcher applies a shared Job
+Object limit to the private committed memory of its backend, dashboard, owned Ollama,
+native window, and their descendants, before allowing them to execute. The actual cap
+is reduced if necessary to fit current host headroom. The dashboard's JS heap is capped
+at 512 MiB. Docker retains its separate per-world RAM/no-swap limits. These limits do
+not cap unrelated programs, external Ollama, GPU memory, file-backed mappings, or the
+Docker/WSL VM as a whole; they cannot guarantee that other programs leave RAM free.
+
+While running, memory pressure holds new inference/tool calls and freezes agent lifetime
+clocks. Recovery requires another 512 MiB of headroom to avoid cycling near the threshold.
+The launcher logs the hold/recovery and the GUI shows a memory safety notice.
+Direct backend launches also use the reserve (`UTOPIA_RAM_RESERVE_MB`, default 2048),
+but the Windows process cap requires the desktop launcher. Both desktop memory settings
+accept integers from 512 to 65536 MiB. Linux uses host headroom checks and Docker limits;
+the Windows Job Object cap is Windows-only.
+
 For development, the backend can still run separately:
 
 ```powershell

@@ -11,6 +11,7 @@ import subprocess
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
@@ -21,6 +22,7 @@ from utopia.config import Economy, WorldConfig
 from utopia.engine import Engine
 from utopia.exports import all_events, comparison, export_chunks, public_trajectories
 from utopia.providers import SharedInference
+from utopia.resources import MemoryPressure
 from utopia.runtime import Runtime
 from utopia.sandbox import DockerSandbox, SandboxUnavailable
 from utopia.store import Store
@@ -329,11 +331,19 @@ def create_app(directory=None, store=None, token=None):
             if action in {"start", "resume"}:
                 if any(e.state["status"] == "RUNNING" for e in engines.values()):
                     raise ValueError("Pause the active run before starting another")
-                inference.semaphore = asyncio.Semaphore(engine.config.inference_concurrency)
+                local_ollama = any(
+                    agent["model"]["provider"] == "ollama"
+                    and urlparse(agent["model"]["base_url"]).hostname
+                    in {"localhost", "127.0.0.1", "::1"}
+                    for agent in engine.state["agents"].values()
+                )
+                inference.semaphore = asyncio.Semaphore(
+                    1 if local_ollama else engine.config.inference_concurrency
+                )
                 runtime = runtimes.setdefault(run_id, Runtime(engine, inference))
                 try:
                     await runtime.start(action)
-                except (httpx.HTTPError, ValueError) as error:
+                except (httpx.HTTPError, ValueError, MemoryPressure) as error:
                     engine.record("run.start-failed", {"error": str(error)}, severity="error")
                     raise HTTPException(503, str(error)) from error
                 except SandboxUnavailable as error:

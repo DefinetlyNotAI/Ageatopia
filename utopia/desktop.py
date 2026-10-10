@@ -12,6 +12,8 @@ from pathlib import Path
 
 import httpx
 
+from utopia.resources import MemoryGuard, WindowsMemoryJob
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ROOT / ".data" / "desktop.json"
 
@@ -31,6 +33,8 @@ def default_config():
         "dashboard_port": 3000,
         "manage_ollama": True,
         "ollama_cache_ram_mb": 1024,
+        "ram_reserve_mb": 2048,
+        "process_memory_mb": 4096,
     }
 
 
@@ -51,6 +55,10 @@ def validate_config(values, path=DEFAULT_CONFIG):
         raise ValueError("ollama_cache_ram_mb must be an integer between 0 and 16384")
     if config["manage_ollama"] and 11434 in (config["backend_port"], config["dashboard_port"]):
         raise ValueError("Application ports must not conflict with local Ollama port 11434")
+    for key in ("ram_reserve_mb", "process_memory_mb"):
+        value = config[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not 512 <= value <= 65536:
+            raise ValueError(f"{key} must be an integer between 512 and 65536")
     config["data_dir"] = str(Path(config["data_dir"]).expanduser().resolve())
     config["config_path"] = str(Path(path).expanduser().resolve())
     return config
@@ -100,6 +108,33 @@ class ProcessSupervisor:
         self.processes = {}
         self.external_ollama = False
         self.progress = None
+        self.memory_guard = MemoryGuard(config["ram_reserve_mb"])
+        self.memory_job = None
+
+    def spawn_limited(self, command, **kwargs):
+        state = self.memory_guard.check(256)
+        if os.name != "nt":
+            return subprocess.Popen(command, **kwargs)
+        if self.memory_job is None:
+            budget = min(
+                self.config["process_memory_mb"],
+                state["available_mb"] - state["ram_reserve_mb"],
+                state["commit_available_mb"] - state["commit_reserve_mb"],
+            )
+            if budget < 512:
+                raise RuntimeError(
+                    "Desktop services need at least 512 MiB beyond the host reserve."
+                )
+            self.memory_job = WindowsMemoryJob(budget)
+            message = (
+                f"Memory safety: owned processes capped at {budget} MiB; "
+                f"reserving {state['ram_reserve_mb']} MiB RAM and "
+                f"{state['commit_reserve_mb']} MiB commit"
+            )
+            self.logger.info(message)
+            if self.progress:
+                self.progress(message)
+        return self.memory_job.spawn(command, **kwargs)
 
     @staticmethod
     def _assert_port_available(port):
@@ -119,7 +154,7 @@ class ProcessSupervisor:
         log_file = open(self.data_dir / "logs" / f"{name}.log", "ab", buffering=0)
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
-            process = subprocess.Popen(
+            process = self.spawn_limited(
                 command,
                 cwd=cwd,
                 env=env,
@@ -157,6 +192,9 @@ class ProcessSupervisor:
         env = os.environ.copy()
         env["OLLAMA_HOST"] = "127.0.0.1:11434"
         env["LLAMA_ARG_CACHE_RAM"] = str(self.config["ollama_cache_ram_mb"])
+        env["OLLAMA_MAX_LOADED_MODELS"] = "1"
+        env["OLLAMA_NUM_PARALLEL"] = "1"
+        env["OLLAMA_MAX_QUEUE"] = "16"
         self.external_ollama = False
         process = self._spawn("ollama", [executable, "serve"], ROOT, env)
         deadline = time.monotonic() + 30
@@ -190,6 +228,8 @@ class ProcessSupervisor:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env["UTOPIA_DATA"] = str(self.data_dir)
+        env["UTOPIA_RAM_RESERVE_MB"] = str(self.config["ram_reserve_mb"])
+        env["NODE_OPTIONS"] = "--max-old-space-size=512"
         env["UTOPIA_API_URL"] = f"http://127.0.0.1:{self.config['backend_port']}"
         try:
             if self.config["manage_ollama"]:
@@ -311,6 +351,10 @@ class ProcessSupervisor:
             self.logger.info(json.dumps({"action": "stopped", "service": name}))
             if self.progress:
                 self.progress(f"Stopped {name}")
+
+        if self.memory_job is not None:
+            self.memory_job.close()
+            self.memory_job = None
 
     def status(self):
         statuses = {
@@ -491,7 +535,8 @@ def native_command(url, data_dir):
 
 
 def open_window(url, data_dir, supervisor=None):
-    with subprocess.Popen(native_command(url, data_dir), cwd=ROOT) as process:
+    spawn = supervisor.spawn_limited if supervisor else subprocess.Popen
+    with spawn(native_command(url, data_dir), cwd=ROOT) as process:
         try:
             while True:
                 try:

@@ -279,6 +279,7 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
               <a key={format} download={`utopia-${run.id}.${format}`} href={`/api/runs/${run.id}/export/${format}`}>{format.toUpperCase()}</a>)}
               <a download={`trajectories-${run.id}.jsonl`} href={`/api/runs/${run.id}/training-data`}>Public training trajectories</a></div></details></div></div>
         {pendingAction && <p role="status" className="muted">{pendingAction}</p>}
+        {run.metrics.memory_pressure && <p role="status" className="notice">Memory safety hold. Agent work and lifetime clocks are waiting for RAM and Windows commit headroom. Work resumes automatically when memory recovers.</p>}
         <nav className="tabs" role="tablist" aria-label="Run sections" onKeyDown={onRunTabKeyDown}>{TABS.map((value, index) => <button key={value}
           id={`run-tab-${index}`} type="button" role="tab" aria-selected={tab === value} aria-controls="run-tab-panel" tabIndex={tab === value ? 0 : -1}
           title={`Keyboard shortcut: Alt+${index + 1}`} className={tab === value ? "active" : ""} onClick={() => setTab(value)}>{value}</button>)}</nav>

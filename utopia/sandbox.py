@@ -6,6 +6,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from utopia.resources import MemoryGuard, MemoryPressure
+
 CLIENT = (
     "import socket,sys; s=socket.socket(socket.AF_UNIX); "
     "s.connect('/control/socket'); s.sendall(sys.stdin.buffer.read()+b'\\n'); "
@@ -31,6 +33,11 @@ class DockerSandbox:
         if not shutil.which("docker"):
             raise SandboxUnavailable("Docker is required. Host execution is disabled.")
         async with self.command_limit:
+            if arguments[0] not in {"rm", "stop", "kill"} and arguments[:2] != ("volume", "rm"):
+                try:
+                    MemoryGuard().check(64)
+                except MemoryPressure as error:
+                    raise SandboxUnavailable(str(error)) from error
             try:
                 process = await asyncio.create_subprocess_exec(
                     "docker",

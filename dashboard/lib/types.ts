@@ -40,7 +40,7 @@ export type Run = {
   id: string; name: string; status: string; sim_ms: number; wall_elapsed_ms: number;
   agents: Agent[]; tasks: Task[]; respawns: { slot: number; due_ms: number }[];
   config?: Config; version: number; economy_version: number;
-  metrics: { gpu?: { utilization_percent: number; used_mb: number; total_mb: number } | null;
+  metrics: { memory_pressure?: boolean; gpu?: { utilization_percent: number; used_mb: number; total_mb: number } | null;
     queue_depth?: number; active_inferences?: number; tokens?: number; tokens_per_second?: number;
     inference_ms?: number; inferences?: number };
 };

@@ -150,7 +150,7 @@ export function SandboxRoom({ run, events, connected, inspectAgent, selectTask }
   const [eventId, setEventId] = useState(0);
   const [motion, setMotion] = useState(true);
   const [now, setNow] = useState(() => Date.now());
-  const live = run.status === "RUNNING" && connected;
+  const live = run.status === "RUNNING" && connected && !run.metrics.memory_pressure;
   useEffect(() => {
     let active = true;
     const load = async () => { try { const value = await api<RoomData>(`/runs/${run.id}/room`); if (active) { setRoom(value); setError(""); } }
@@ -185,7 +185,7 @@ export function SandboxRoom({ run, events, connected, inspectAgent, selectTask }
   const mascotSeed = (agent: Agent) => signature(agent.model.model) + run.agents.indexOf(agent);
   const pickAgent = (id: string) => { setSelectedAgent(id); setEventId(0); setPage(Math.floor(agents.findIndex(agent => agent.id === id) / 6)); };
   return <section className={`sandbox-room ${!live || !motion ? "room-still" : ""}`} aria-label="Sandbox room">
-    <div className="room-toolbar"><div><h2>Inside the sandbox</h2><p className="muted">{live ? "Live activity" : run.status === "RUNNING" ? "Stream disconnected · last known state" : `${run.status.toLowerCase()} · recorded state`} · one mascot per agent</p></div>
+    <div className="room-toolbar"><div><h2>Inside the sandbox</h2><p className="muted">{live ? "Live activity" : run.metrics.memory_pressure ? "Memory safety hold · lifetime clocks frozen" : run.status === "RUNNING" ? "Stream disconnected · last known state" : `${run.status.toLowerCase()} · recorded state`} · one mascot per agent</p></div>
       <div className="room-options"><label>Model<select value={model} onChange={e => { setModel(e.target.value); setPage(0); setSelectedAgent(""); setEventId(0); }}><option value="">All models</option>{models.map(name => <option key={name}>{name}</option>)}</select></label>
         <button aria-pressed={!motion} onClick={() => setMotion(value => !value)}>{motion ? "Pause animations" : "Enable animations"}</button></div></div>
     <div className={`room-scene ${!live || !motion ? "room-still" : ""}`} aria-label="Shared sandbox room. Select a station or an agent to inspect it.">

@@ -8,6 +8,7 @@ import time
 
 from utopia.config import ModelSettings
 from utopia.providers import ContextOverflow
+from utopia.resources import MemoryGuard, MemoryPressure
 from utopia.sandbox import DockerSandbox, SandboxUnavailable, initial_workspace
 from utopia.tools import TOOLS, ToolExecutor
 
@@ -40,6 +41,37 @@ class Runtime:
         self.recovery_delay = 1.0
         self.next_recovery_at = 0.0
         self.recovery_attempts = 0
+        self.memory_guard = MemoryGuard()
+        self.memory_paused = False
+
+    def check_memory(self):
+        try:
+            self.memory_guard.check(
+                getattr(self.inference, "memory_needed_mb", 0), recovery=self.memory_paused
+            )
+        except MemoryPressure as error:
+            if not self.memory_paused:
+                self.memory_paused = True
+                self.wall_anchor_ns = time.perf_counter_ns()
+                with self.engine.transaction():
+                    self.engine.state["metrics"]["memory_pressure"] = True
+                    self.engine.emit(
+                        "runtime.memory-pressure", {"error": str(error)}, severity="warning"
+                    )
+            return False
+        if self.memory_paused:
+            self.memory_paused = False
+            self.wall_anchor_ns = time.perf_counter_ns()
+            with self.engine.transaction():
+                self.engine.state["metrics"]["memory_pressure"] = False
+                self.engine.emit("runtime.memory-recovered", {})
+        return True
+
+    async def wait_for_memory(self):
+        while not self.stopping and not self.check_memory():  # noqa: ASYNC110
+            await asyncio.sleep(0.5)
+        if self.stopping:
+            raise asyncio.CancelledError
 
     def schedule_termination(self, identity):
         worker = self.workers.get(identity)
@@ -67,6 +99,8 @@ class Runtime:
         settings_list = [
             ModelSettings.model_validate(a["model"]) for a in engine.state["agents"].values()
         ]
+        if engine.config.embedding_model is not None:
+            settings_list.append(engine.config.embedding_model)
         for settings in settings_list:
             key = f"{settings.provider}:{settings.base_url}:{settings.model}"
             if key not in manifests:
@@ -122,6 +156,8 @@ class Runtime:
 
     async def start(self, action):
         self.engine.config.validate_agent_context()
+        self.memory_guard.check(self.engine.config.tools.memory_mb + 512)
+        self.check_memory()
         if getattr(self.sandbox, "started", False):
             if not self.sandbox.available:
                 recover = getattr(self.sandbox, "recover", None)
@@ -142,7 +178,7 @@ class Runtime:
         self.clock_task = asyncio.create_task(self.clock_loop())
 
     def sync_clock(self, deterministic_tick=False):
-        if self.infrastructure_unavailable:
+        if self.infrastructure_unavailable or self.memory_paused:
             self.wall_anchor_ns = time.perf_counter_ns()
             return
         if self.engine.config.clock_mode == "deterministic" and not deterministic_tick:
@@ -315,6 +351,8 @@ class Runtime:
             try:
                 await asyncio.sleep(self.engine.config.tick_ms / 1000)
                 now = time.perf_counter()
+                if not self.check_memory():
+                    continue
                 if self.infrastructure_unavailable:
                     if now < self.next_recovery_at:
                         continue
@@ -447,8 +485,15 @@ class Runtime:
                 raise
         self.inference.active += 1
         try:
+            await self.wait_for_memory()
             engine._living(identity)
-            result = await self.inference.chat(settings, messages, tools)
+            while True:
+                try:
+                    result = await self.inference.chat(settings, messages, tools)
+                    break
+                except MemoryPressure:
+                    self.check_memory()
+                    await self.wait_for_memory()
             self.sync_clock()
             engine._living(identity)
             with engine.transaction():
@@ -476,6 +521,7 @@ class Runtime:
             return result
         finally:
             self.inference.active -= 1
+            self.inference.memory_needed_mb = 0
             if acquired:
                 self.inference.semaphore.release()
 
@@ -709,6 +755,7 @@ class Runtime:
                     agent["model_version"] = manifest.get("hash")
                     engine.emit("agent.model-version", manifest, identity)
             while not self.stopping and engine.agent(identity)["state"] != "TERMINATED":
+                await self.wait_for_memory()
                 if self.infrastructure_unavailable:
                     await asyncio.sleep(1)
                     continue
@@ -808,6 +855,7 @@ class Runtime:
                 with engine.transaction():
                     agent["pending_tools"] = calls.copy()
                 for call in calls:
+                    await self.wait_for_memory()
                     if engine.agent(identity)["state"] == "TERMINATED" or self.stopping:
                         return
                     function = call["function"]

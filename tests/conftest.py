@@ -5,6 +5,16 @@ from utopia.engine import Engine
 from utopia.store import Store
 
 
+@pytest.fixture(autouse=True)
+def stable_host_memory(request, monkeypatch):
+    if request.node.get_closest_marker("integration") or request.path.name == "test_resources.py":
+        return
+    monkeypatch.setattr(
+        "utopia.resources.host_memory",
+        lambda: {"total_mb": 16000, "available_mb": 12000, "commit_available_mb": 16000},
+    )
+
+
 @pytest.fixture
 def store(tmp_path):
     database = Store.local(tmp_path)
