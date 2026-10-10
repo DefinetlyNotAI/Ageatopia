@@ -1,9 +1,10 @@
 import json
+import sys
 from types import SimpleNamespace
 
 import httpx
 import pytest
-from textual.widgets import TextArea
+from textual.widgets import Button, Label, LoadingIndicator, TextArea
 
 from utopia.control import ControlApp
 from utopia.desktop import ProcessSupervisor, validate_config
@@ -21,6 +22,39 @@ async def test_maintenance_command_palette_and_exit(tmp_path):
         await pilot.press("escape")
         app._write("Successfully installed example [literal]")
         await pilot.press("ctrl+c")
+
+
+@pytest.mark.parametrize(
+    "arguments,failed", [(["-m", "pip", "--version"], False), (["--invalid-option"], True)]
+)
+async def test_maintenance_real_command_finishes(tmp_path, arguments, failed):
+    path = tmp_path / "desktop.json"
+    path.write_text(json.dumps({"data_dir": str(tmp_path)}), encoding="utf-8")
+    app = MaintenanceApp(path)
+    async with app.run_test(size=(80, 24)) as pilot:
+        app._run_steps("Checking pip", [[sys.executable, *arguments]])
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert not app.busy
+        assert not app.query_one("#busy", LoadingIndicator).display
+        assert all(not button.disabled for button in app.query(Button))
+        assert ("failed" if failed else "completed") in str(
+            app.query_one("#activity", Label).render()
+        )
+
+
+async def test_maintenance_worker_failure_resets_busy(tmp_path, monkeypatch):
+    path = tmp_path / "desktop.json"
+    path.write_text(json.dumps({"data_dir": str(tmp_path)}), encoding="utf-8")
+    app = MaintenanceApp(path)
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(
+            "utopia.maintenance.subprocess.Popen",
+            lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("process failure")),
+        )
+        app._run_steps("Checking pip", [[sys.executable, "-m", "pip", "--version"]])
+        await pilot.pause(0.3)
+        assert not app.busy
 
 
 async def test_control_room_saves_model_server_settings(tmp_path):

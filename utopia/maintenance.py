@@ -13,6 +13,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Footer, Header, Input, Label, LoadingIndicator, RichLog, Static
+from textual.worker import Worker, WorkerState
 
 from utopia.desktop import DEFAULT_CONFIG, ROOT, load_config, setup_logging
 
@@ -25,6 +26,11 @@ class MaintenanceApp(App):
     .actions { height: auto; padding: 1 2; }
     .actions Button { margin-right: 1; }
     #model-name { width: 40; }
+    #busy { width: 6; height: 3; }
+    Screen.compact .actions { padding: 0 1; }
+    Screen.compact .actions Button { min-width: 0; width: 1fr; }
+    Screen.compact #model-name { width: 1fr; }
+    Screen.compact #health { min-height: 2; padding: 0 1; }
     #activity { height: 3; padding: 1 2; }
     #maintenance-log { height: 1fr; border: round $primary-darken-2; }
     """
@@ -59,6 +65,10 @@ class MaintenanceApp(App):
     def on_mount(self):
         self.query_one("#busy", LoadingIndicator).display = False
         self.query_one("#maintenance-log").border_title = "Maintenance output"
+        self.screen.set_class(self.size.width < 100 or self.size.height < 30, "compact")
+
+    def on_resize(self, event):
+        self.screen.set_class(event.size.width < 100 or event.size.height < 30, "compact")
 
     def _write(self, message, level=logging.INFO):
         style = "red" if level >= logging.ERROR or message.startswith("ERROR") else ""
@@ -70,14 +80,24 @@ class MaintenanceApp(App):
             ("[", "Collecting", "Downloading", "Installing", "Building")
         ):
             style = "cyan"
-        self.query_one("#maintenance-log", RichLog).write(Text(message, style=style))
+        content = Text.from_ansi(message)
+        if style:
+            content.stylize(style)
+        self.query_one("#maintenance-log", RichLog).write(content)
         self.logger.log(level, message)
 
     def _finish(self, message, failed=False):
         self.busy = False
         self.query_one("#busy", LoadingIndicator).display = False
         self.query_one("#activity", Label).update(message)
+        for button in self.query(Button):
+            button.disabled = False
+        self._write(message, logging.ERROR if failed else logging.INFO)
         self.notify(message, severity="error" if failed else "information", timeout=8)
+
+    def on_worker_state_changed(self, event: Worker.StateChanged):
+        if event.state == WorkerState.ERROR:
+            self._finish(f"Task failed: {event.worker.error}", failed=True)
 
     def on_button_pressed(self, event):
         try:
@@ -86,6 +106,9 @@ class MaintenanceApp(App):
             self._finish(str(error), failed=True)
 
     def _handle_maintenance_action(self, action):
+        if self.busy:
+            self.notify("A maintenance task is already running", severity="warning")
+            return
         if action == "install":
             self._run_steps(
                 "Installing project dependencies",
@@ -149,11 +172,13 @@ class MaintenanceApp(App):
             self.notify("A maintenance task is already running", severity="warning")
             return
         self.busy = True
+        for button in self.query(Button):
+            button.disabled = True
         self.query_one("#busy", LoadingIndicator).display = True
         self.query_one("#activity", Label).update(label)
         self.run_commands(label, commands)
 
-    @work(thread=True, exclusive=True)
+    @work(thread=True, exclusive=True, exit_on_error=False)
     def run_commands(self, label, commands):
         for index, command in enumerate(commands, 1):
             if isinstance(command, Exception):
@@ -195,11 +220,13 @@ class MaintenanceApp(App):
             self.notify("A maintenance task is already running", severity="warning")
             return
         self.busy = True
+        for button in self.query(Button):
+            button.disabled = True
         self.query_one("#busy", LoadingIndicator).display = True
         self.query_one("#activity", Label).update("Checking Docker, Ollama, GPU and disk")
         self._diagnostics_worker()
 
-    @work(thread=True, exclusive=True)
+    @work(thread=True, exclusive=True, exit_on_error=False)
     def _diagnostics_worker(self):
         self.app.call_from_thread(self._write, "System diagnostics")
         outcomes = []

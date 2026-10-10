@@ -23,7 +23,7 @@ function Install-ProjectPython {
 
     # Windows PowerShell treats native stderr as errors; pip warnings must still stream.
     $ErrorActionPreference = 'Continue'
-    $width = [Math]::Max(20, [Math]::Min(100, $Host.UI.RawUI.WindowSize.Width - 4))
+    $width = [Math]::Max(20, [Math]::Min(100, $Host.UI.RawUI.WindowSize.Width - 6))
     $edge = '+' + ('-' * ($width + 2)) + '+'
     Write-Host $edge -ForegroundColor DarkCyan
     Write-Host ('| ' + $Title.PadRight($width) + ' |') -ForegroundColor Cyan
