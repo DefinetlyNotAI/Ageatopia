@@ -9,11 +9,11 @@ type RoomData = { sim_ms: number; sandbox_available: boolean; image: string; fil
 type Mood = "idle" | "thinking" | "queued" | "reading" | "writing" | "running" | "remembering" | "reflecting" | "relaxing" | "choosing" | "celebrating" | "error" | "sleeping";
 type Zone = "files" | "terminal" | "memory" | "lounge" | "tasks";
 const ZONES: { id: Zone; name: string; caption: string; x: number; y: number }[] = [
-  { id: "files", name: "File library", caption: "Shared /workspace", x: 19, y: 18 },
-  { id: "tasks", name: "Task board", caption: "Choose · solve · submit", x: 49, y: 12 },
-  { id: "terminal", name: "Workbench", caption: "Code & processes", x: 80, y: 20 },
+  { id: "files", name: "File library", caption: "Shared /workspace", x: 19, y: 5 },
+  { id: "tasks", name: "Task board", caption: "Choose · solve · submit", x: 49, y: 5 },
+  { id: "terminal", name: "Workbench", caption: "Code & processes", x: 80, y: 14 },
   { id: "lounge", name: "Quiet corner", caption: "Rest & reflection", x: 16, y: 55 },
-  { id: "memory", name: "Notebook desk", caption: "Personal memory", x: 82, y: 55 },
+  { id: "memory", name: "Notebook desk", caption: "Personal memory", x: 82, y: 51 },
 ];
 const COLORS = ["#91c9a0", "#e9b27f", "#9dbbd7", "#e1ca75", "#c7add1", "#e5a5ad"];
 const CAPTIONS: Record<Mood, string> = { idle: "Taking a breath", thinking: "Thinking", queued: "Waiting for model", reading: "Reading files",
@@ -192,7 +192,7 @@ export function SandboxRoom({ run, events, connected, inspectAgent, selectTask }
       <RoomArtwork />
       <span className="room-address">/workspace <span>{room?.sandbox_available ? "Docker connected" : "Saved snapshot"}</span></span>
       {ZONES.map(station => <button key={station.id} className={`room-station ${zone === station.id ? "active" : ""}`} style={{ left: `${station.x}%`, top: `${station.y}%` }}
-        onClick={() => { setZone(station.id); setSelectedAgent(""); setEventId(0); }} title={station.caption}><strong>{station.name}</strong><small>{station.caption}</small></button>)}
+        onClick={() => { setZone(station.id); setSelectedAgent(""); setEventId(0); }} title={station.caption}><strong>{station.name}</strong></button>)}
       <div className="room-shelf-items" aria-label="Workspace shelf">{[...shelf].slice(0, 2).map(([name, group]) => <button key={name}
         title={`/workspace/${name}\n${group.folder ? `${group.count} files` : "File"} · ${bytes(group.size)}\nSelect to inspect`}
         onClick={() => { setZone("files"); setSelectedAgent(""); setEventId(0); if (group.folder) { setSearch(`${name}/`); setFile(""); } else { setSearch(""); setFile(name); } }}>
@@ -200,17 +200,17 @@ export function SandboxRoom({ run, events, connected, inspectAgent, selectTask }
         {shelf.size > 2 && <button onClick={() => { setZone("files"); setSelectedAgent(""); setEventId(0); setFile(""); setSearch(""); }}>+ {shelf.size - 2} more entries</button>}
       </div>
       {activities.map(({ agent, mood, zone: place, event, recent }) => {
-        const neighbors = activities.filter(value => value.zone === place);
-        const index = neighbors.findIndex(value => value.agent.id === agent.id);
-        const columns = Math.min(neighbors.length, 3);
-        const centers: Record<Zone, [number, number]> = { files: [20, 36], terminal: [80, 36], memory: [81, 62], lounge: [19, 62], tasks: [49, 41] };
-        const [x, y] = centers[place];
+        // Keep separate floor positions even when every agent visits the same station.
+        const order: Record<Zone, number> = { files: 0, lounge: 1, tasks: 2, terminal: 3, memory: 4 };
+        const residents = [...activities].sort((a, b) => order[a.zone] - order[b.zone]);
+        const index = residents.findIndex(value => value.agent.id === agent.id);
+        const x = activities.length === 1 ? 50 : 11 + index * 78 / (activities.length - 1);
         const caption = recent && event ? `Recent: ${toolLabel(event)}` : CAPTIONS[mood];
-        return <button key={agent.id} className={`room-resident ${x < 30 ? "side-left" : x > 70 ? "side-right" : ""} ${selectedAgent === agent.id ? "selected" : ""}`} style={{ left: `${x + (index % columns - (columns - 1) / 2) * 10}%`, top: `${y + Math.floor(index / columns) * 18}%`, "--pet-delay": `${signature(agent.id) % 2000}ms` } as CSSProperties}
+        return <button key={agent.id} className={`room-resident ${x < 30 ? "side-left" : x > 70 ? "side-right" : ""} ${selectedAgent === agent.id ? "selected" : ""}`} style={{ left: `${x}%`, top: "70%", "--pet-delay": `${signature(agent.id) % 2000}ms` } as CSSProperties}
           onClick={() => pickAgent(agent.id)} aria-label={`${agent.name}, ${agent.model.model}, ${live ? caption : agent.state.toLowerCase()}. Inspect mascot`}
           onPointerMove={e => { const box = e.currentTarget.getBoundingClientRect(); e.currentTarget.style.setProperty("--gaze-x", `${(e.clientX - box.left - box.width / 2) / box.width * 4}px`); e.currentTarget.style.setProperty("--gaze-y", `${(e.clientY - box.top - box.height / 2) / box.height * 3}px`); }}
           onPointerLeave={e => { e.currentTarget.style.setProperty("--gaze-x", "0px"); e.currentTarget.style.setProperty("--gaze-y", "0px"); }}>
-          <span className="mascot-tip"><strong>{agent.name}</strong><span>{agent.model.model}</span><span>{live ? caption : `${run.status.toLowerCase()} · ${agent.state.toLowerCase()}`}</span><span>Lifetime {duration(agent.lifetime_ms)} · {agent.processes.length} processes</span>{event && <span>{toolLabel(event)}</span>}</span>
+          <span className="mascot-tip"><strong>{agent.name}</strong><span>{agent.model.model}</span><span>{ZONES.find(station => station.id === place)?.name}</span><span>{live ? caption : `${run.status.toLowerCase()} · ${agent.state.toLowerCase()}`}</span><span>Lifetime {duration(agent.lifetime_ms)} · {agent.processes.length} processes</span>{event && <span>{toolLabel(event)}</span>}</span>
           <Mascot seed={mascotSeed(agent)} mood={mood} /><span className="resident-name">{agent.name}</span>
           <span className="resident-state" title={live ? caption : agent.state.toLowerCase()}>{live ? caption : agent.state.toLowerCase()}</span>
         </button>;

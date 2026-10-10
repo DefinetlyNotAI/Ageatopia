@@ -11,10 +11,10 @@
 .room-art { position:absolute; width:100%; height:100%; }
 .room-address { position:absolute; top:12px; left:16px; font:11px Consolas,monospace; color:#435a3e; }
 .room-address span { margin-left:12px; font:10px "Segoe UI",sans-serif; }
-.room-scene .room-station { position:absolute; transform:translateX(-50%); padding:5px 8px; min-width:115px; border:1px solid #91a681; border-radius:2px; background:#f3f6eae8; text-align:center; z-index:1; }
+.room-scene .room-station { position:absolute; transform:translateX(-50%); padding:5px 8px; border:0; border-bottom:2px solid transparent; border-radius:0; background:none; color:#203e2e; text-align:center; z-index:1; text-shadow:0 1px 1px #fff; }
 .room-station strong,.room-station small { display:block; font-size:11px; }
 .room-station small { font-size:9px; color:#5a6f50; }
-.room-scene .room-station.active { border-color:#426e43; background:#fffbee; }
+.room-scene .room-station.active,.room-scene .room-station:hover { border-bottom-color:#426e43; background:none; }
 .room-shelf-items { position:absolute; top:25%; left:9%; width:22%; display:grid; gap:3px; z-index:1; }
 .room-shelf-items button { display:flex; justify-content:space-between; gap:5px; padding:3px 6px; border:1px solid #8e9e7d; border-radius:2px; background:#f5f1dc; font-size:10px; text-align:left; }
 .room-shelf-items button span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
