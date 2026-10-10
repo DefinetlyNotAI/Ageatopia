@@ -97,7 +97,7 @@ if (Test-Path -LiteralPath $outputPath) {
     Remove-Item -LiteralPath $outputPath -Force
 }
 
-$compileLine = 'cl.exe /nologo /TC /W4 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /I"{0}" /Fo"{1}\ageatopia.obj" /Fe"{2}" "{3}" /link /SUBSYSTEM:WINDOWS /LIBPATH:"{4}" WebView2Loader.dll.lib comctl32.lib ole32.lib shell32.lib user32.lib winhttp.lib' -f $includeRoot, $outputRoot, $outputPath, $sourcePath, $importLibraryRoot
+$compileLine = 'cl.exe /nologo /TC /W4 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /I"{0}" /Fo"{1}\ageatopia.obj" /Fe"{2}" "{3}" /link /SUBSYSTEM:WINDOWS /LIBPATH:"{4}" WebView2Loader.dll.lib comctl32.lib comdlg32.lib ole32.lib shell32.lib user32.lib winhttp.lib' -f $includeRoot, $outputRoot, $outputPath, $sourcePath, $importLibraryRoot
 
 if ($vcvarsPath) {
     $commandLine = 'call "{0}" >nul && {1}' -f $vcvarsPath, $compileLine
@@ -110,7 +110,7 @@ if ($vcvarsPath) {
     if (-not $compiler) {
         throw "Visual Studio Build Tools with the x64 C++ workload were not found."
     }
-    & $compiler.Source /nologo /TC /W4 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 "/I$includeRoot" "/Fo$outputRoot\ageatopia.obj" "/Fe$outputPath" $sourcePath /link /SUBSYSTEM:WINDOWS "/LIBPATH:$importLibraryRoot" WebView2Loader.dll.lib comctl32.lib ole32.lib shell32.lib user32.lib winhttp.lib
+    & $compiler.Source /nologo /TC /W4 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 "/I$includeRoot" "/Fo$outputRoot\ageatopia.obj" "/Fe$outputPath" $sourcePath /link /SUBSYSTEM:WINDOWS "/LIBPATH:$importLibraryRoot" WebView2Loader.dll.lib comctl32.lib comdlg32.lib ole32.lib shell32.lib user32.lib winhttp.lib
     if ($LASTEXITCODE -ne 0) {
         throw "MSVC failed to build the x64 Ageatopia host."
     }

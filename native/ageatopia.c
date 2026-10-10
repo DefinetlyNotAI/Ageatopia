@@ -3,6 +3,7 @@
 
 #include <windows.h>
 #include <commctrl.h>
+#include <commdlg.h>
 #include <objbase.h>
 #include <shellapi.h>
 #include <strsafe.h>
@@ -12,6 +13,8 @@
 #include <wchar.h>
 
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "comdlg32.lib")
+#pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "user32.lib")
@@ -29,6 +32,7 @@
 #define IDM_NAV_BACK 1001
 #define IDM_NAV_FORWARD 1002
 #define IDM_NAV_RELOAD 1003
+#define IDM_NAV_HOME 1004
 #define IDM_FILE_EXIT 2001
 
 typedef struct ParsedUrl {
@@ -76,10 +80,24 @@ typedef struct NavigationCompletedHandler {
     App *app;
 } NavigationCompletedHandler;
 
+typedef struct DownloadStartingHandler {
+    ICoreWebView2DownloadStartingEventHandler iface;
+    LONG refCount;
+    App *app;
+} DownloadStartingHandler;
+
+typedef struct AcceleratorKeyPressedHandler {
+    ICoreWebView2AcceleratorKeyPressedEventHandler iface;
+    LONG refCount;
+    App *app;
+} AcceleratorKeyPressedHandler;
+
 struct App {
     HINSTANCE instance;
     HWND window;
+    HWND toolbar;
     HWND status;
+    HFONT messageFont;
     ICoreWebView2Environment *environment;
     ICoreWebView2Controller *controller;
     ICoreWebView2 *webview;
@@ -118,6 +136,15 @@ static HRESULT STDMETHODCALLTYPE NavigationCompletedInvoke(
     ICoreWebView2NavigationCompletedEventHandler *This,
     ICoreWebView2 *sender,
     ICoreWebView2NavigationCompletedEventArgs *args);
+static HRESULT STDMETHODCALLTYPE DownloadStartingInvoke(
+    ICoreWebView2DownloadStartingEventHandler *This,
+    ICoreWebView2 *sender,
+    ICoreWebView2DownloadStartingEventArgs *args);
+static HRESULT STDMETHODCALLTYPE AcceleratorKeyPressedInvoke(
+    ICoreWebView2AcceleratorKeyPressedEventHandler *This,
+    ICoreWebView2Controller *sender,
+    ICoreWebView2AcceleratorKeyPressedEventArgs *args);
+static void UpdateNavigationControls(HWND window);
 
 #define DEFINE_HANDLER_IDENTITY(prefix, handler_type, interface_type, interface_iid)          \
     static HRESULT STDMETHODCALLTYPE prefix##QueryInterface(                                 \
@@ -174,6 +201,16 @@ DEFINE_HANDLER_IDENTITY(
     NavigationCompletedHandler,
     ICoreWebView2NavigationCompletedEventHandler,
     IID_ICoreWebView2NavigationCompletedEventHandler)
+DEFINE_HANDLER_IDENTITY(
+    DownloadStartingHandler_,
+    DownloadStartingHandler,
+    ICoreWebView2DownloadStartingEventHandler,
+    IID_ICoreWebView2DownloadStartingEventHandler)
+DEFINE_HANDLER_IDENTITY(
+    AcceleratorKeyPressedHandler_,
+    AcceleratorKeyPressedHandler,
+    ICoreWebView2AcceleratorKeyPressedEventHandler,
+    IID_ICoreWebView2AcceleratorKeyPressedEventHandler)
 
 static ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandlerVtbl
     ENVIRONMENT_HANDLER_VTBL = {
@@ -207,6 +244,18 @@ static ICoreWebView2NavigationCompletedEventHandlerVtbl
         NavigationCompletedHandler_AddRef,
         NavigationCompletedHandler_Release,
         NavigationCompletedInvoke};
+
+static ICoreWebView2DownloadStartingEventHandlerVtbl DOWNLOAD_STARTING_HANDLER_VTBL = {
+    DownloadStartingHandler_QueryInterface,
+    DownloadStartingHandler_AddRef,
+    DownloadStartingHandler_Release,
+    DownloadStartingInvoke};
+
+static ICoreWebView2AcceleratorKeyPressedEventHandlerVtbl ACCELERATOR_KEY_PRESSED_HANDLER_VTBL = {
+    AcceleratorKeyPressedHandler_QueryInterface,
+    AcceleratorKeyPressedHandler_AddRef,
+    AcceleratorKeyPressedHandler_Release,
+    AcceleratorKeyPressedInvoke};
 
 static void SetStatus(App *app, LPCWSTR message)
 {
@@ -355,10 +404,135 @@ static BOOL LaunchExternalUrl(App *app, LPCWSTR value)
     return (INT_PTR)result > 32;
 }
 
+static BOOL CreateNavigationToolbar(App *app)
+{
+    static const WCHAR labels[] = L"Back\0Forward\0Home\0Reload\0";
+    static const int commands[] = {
+        IDM_NAV_BACK,
+        IDM_NAV_FORWARD,
+        IDM_NAV_HOME,
+        IDM_NAV_RELOAD};
+    TBBUTTON buttons[ARRAYSIZE(commands)];
+    int stringIndex;
+    size_t index;
+
+    app->toolbar = CreateWindowExW(
+        0,
+        TOOLBARCLASSNAMEW,
+        NULL,
+        WS_CHILD | WS_VISIBLE | TBSTYLE_FLAT | TBSTYLE_LIST | TBSTYLE_TOOLTIPS |
+            CCS_TOP | CCS_NODIVIDER,
+        0,
+        0,
+        0,
+        0,
+        app->window,
+        (HMENU)2,
+        app->instance,
+        NULL);
+    if (app->toolbar == NULL) {
+        return FALSE;
+    }
+
+    SendMessageW(app->toolbar, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
+    stringIndex = (int)SendMessageW(app->toolbar, TB_ADDSTRINGW, 0, (LPARAM)labels);
+    if (stringIndex == -1) {
+        return FALSE;
+    }
+
+    ZeroMemory(buttons, sizeof(buttons));
+    for (index = 0; index < ARRAYSIZE(buttons); ++index) {
+        buttons[index].iBitmap = I_IMAGENONE;
+        buttons[index].idCommand = commands[index];
+        buttons[index].fsState = TBSTATE_ENABLED;
+        buttons[index].fsStyle = BTNS_BUTTON | BTNS_AUTOSIZE | BTNS_SHOWTEXT;
+        buttons[index].iString = stringIndex + index;
+    }
+    if (!SendMessageW(
+            app->toolbar,
+            TB_ADDBUTTONSW,
+            ARRAYSIZE(buttons),
+            (LPARAM)buttons)) {
+        return FALSE;
+    }
+    SendMessageW(app->toolbar, TB_AUTOSIZE, 0, 0);
+    return TRUE;
+}
+
+static void ApplyNativeMessageFont(App *app)
+{
+    NONCLIENTMETRICSW metrics;
+    HFONT font;
+    HFONT previous;
+    UINT dpi;
+    int horizontalPadding;
+    int verticalPadding;
+
+    if (app->window == NULL) {
+        return;
+    }
+    dpi = GetDpiForWindow(app->window);
+    if (dpi == 0) {
+        dpi = USER_DEFAULT_SCREEN_DPI;
+    }
+    ZeroMemory(&metrics, sizeof(metrics));
+    metrics.cbSize = (UINT)sizeof(metrics);
+    if (!SystemParametersInfoForDpi(
+            SPI_GETNONCLIENTMETRICS, (UINT)sizeof(metrics), &metrics, 0, dpi)) {
+        return;
+    }
+    font = CreateFontIndirectW(&metrics.lfMessageFont);
+    if (font == NULL) {
+        return;
+    }
+
+    previous = app->messageFont;
+    app->messageFont = font;
+    if (app->toolbar != NULL) {
+        SendMessageW(app->toolbar, WM_SETFONT, (WPARAM)font, TRUE);
+        horizontalPadding = MulDiv(12, (int)dpi, USER_DEFAULT_SCREEN_DPI);
+        verticalPadding = MulDiv(7, (int)dpi, USER_DEFAULT_SCREEN_DPI);
+        SendMessageW(
+            app->toolbar,
+            TB_SETPADDING,
+            0,
+            MAKELONG(horizontalPadding, verticalPadding));
+    }
+    if (app->status != NULL) {
+        SendMessageW(app->status, WM_SETFONT, (WPARAM)font, TRUE);
+    }
+    if (previous != NULL) {
+        DeleteObject(previous);
+    }
+}
+
+static void LayoutToolbar(App *app)
+{
+    RECT client;
+    RECT toolbarBounds;
+    int height;
+
+    if (app->toolbar == NULL || app->window == NULL ||
+        !GetClientRect(app->window, &client)) {
+        return;
+    }
+    SendMessageW(app->toolbar, TB_AUTOSIZE, 0, 0);
+    if (!GetWindowRect(app->toolbar, &toolbarBounds)) {
+        return;
+    }
+    MapWindowPoints(NULL, app->window, (POINT *)&toolbarBounds, 2);
+    height = toolbarBounds.bottom - toolbarBounds.top;
+    if (height < 0) {
+        height = 0;
+    }
+    MoveWindow(app->toolbar, 0, 0, client.right, height, TRUE);
+}
+
 static void LayoutStatus(App *app)
 {
     RECT client;
     int parts[2];
+    int trailingWidth;
 
     if (app->status == NULL || app->window == NULL) {
         return;
@@ -367,7 +541,8 @@ static void LayoutStatus(App *app)
     if (!GetClientRect(app->window, &client)) {
         return;
     }
-    parts[0] = client.right > 150 ? client.right - 150 : 0;
+    trailingWidth = MulDiv(150, (int)GetDpiForWindow(app->window), USER_DEFAULT_SCREEN_DPI);
+    parts[0] = client.right > trailingWidth ? client.right - trailingWidth : 0;
     parts[1] = -1;
     SendMessageW(app->status, SB_SETPARTS, ARRAYSIZE(parts), (LPARAM)parts);
     SendMessageW(app->status, SB_SETTEXTW, 1, (LPARAM)APP_TITLE);
@@ -376,6 +551,7 @@ static void LayoutStatus(App *app)
 static void ResizeWebView(App *app)
 {
     RECT bounds;
+    RECT toolbarBounds;
     RECT statusBounds;
 
     if (app->controller == NULL || app->window == NULL ||
@@ -383,6 +559,12 @@ static void ResizeWebView(App *app)
         return;
     }
 
+    if (app->toolbar != NULL && GetWindowRect(app->toolbar, &toolbarBounds)) {
+        MapWindowPoints(NULL, app->window, (POINT *)&toolbarBounds, 2);
+        if (toolbarBounds.bottom > bounds.top) {
+            bounds.top = toolbarBounds.bottom;
+        }
+    }
     if (app->status != NULL && GetWindowRect(app->status, &statusBounds)) {
         MapWindowPoints(NULL, app->window, (POINT *)&statusBounds, 2);
         if (statusBounds.top < bounds.bottom) {
@@ -478,10 +660,50 @@ static NavigationCompletedHandler *CreateNavigationCompletedHandler(App *app)
     return handler;
 }
 
+static DownloadStartingHandler *CreateDownloadStartingHandler(App *app)
+{
+    DownloadStartingHandler *handler = (DownloadStartingHandler *)HeapAlloc(
+        GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*handler));
+    if (handler != NULL) {
+        handler->iface.lpVtbl = &DOWNLOAD_STARTING_HANDLER_VTBL;
+        handler->refCount = 1;
+        handler->app = app;
+    }
+    return handler;
+}
+
+static AcceleratorKeyPressedHandler *CreateAcceleratorKeyPressedHandler(App *app)
+{
+    AcceleratorKeyPressedHandler *handler = (AcceleratorKeyPressedHandler *)HeapAlloc(
+        GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*handler));
+    if (handler != NULL) {
+        handler->iface.lpVtbl = &ACCELERATOR_KEY_PRESSED_HANDLER_VTBL;
+        handler->refCount = 1;
+        handler->app = app;
+    }
+    return handler;
+}
+
+static HRESULT RegisterAcceleratorKeyPressedHandler(App *app)
+{
+    AcceleratorKeyPressedHandler *handler = CreateAcceleratorKeyPressedHandler(app);
+    EventRegistrationToken token;
+    HRESULT hr;
+
+    if (handler == NULL) {
+        return E_OUTOFMEMORY;
+    }
+    hr = ICoreWebView2Controller_add_AcceleratorKeyPressed(
+        app->controller, &handler->iface, &token);
+    ICoreWebView2AcceleratorKeyPressedEventHandler_Release(&handler->iface);
+    return hr;
+}
+
 static HRESULT RegisterNavigationHandlers(App *app)
 {
     HRESULT hr;
     EventRegistrationToken token;
+    ICoreWebView2_4 *webview4 = NULL;
     NavigationHandler *navigation = CreateNavigationHandler(app, FALSE);
     if (navigation == NULL) {
         return E_OUTOFMEMORY;
@@ -521,6 +743,24 @@ static HRESULT RegisterNavigationHandlers(App *app)
     hr = ICoreWebView2_add_NavigationCompleted(
         app->webview, &completed->iface, &token);
     ICoreWebView2NavigationCompletedEventHandler_Release(&completed->iface);
+    if (FAILED(hr)) {
+        return hr;
+    }
+
+    hr = ICoreWebView2_QueryInterface(
+        app->webview, &IID_ICoreWebView2_4, (void **)&webview4);
+    if (FAILED(hr)) {
+        return hr;
+    }
+    DownloadStartingHandler *download = CreateDownloadStartingHandler(app);
+    if (download == NULL) {
+        ICoreWebView2_4_Release(webview4);
+        return E_OUTOFMEMORY;
+    }
+    hr = ICoreWebView2_4_add_DownloadStarting(
+        webview4, &download->iface, &token);
+    ICoreWebView2DownloadStartingEventHandler_Release(&download->iface);
+    ICoreWebView2_4_Release(webview4);
     return hr;
 }
 
@@ -573,6 +813,7 @@ static HRESULT STDMETHODCALLTYPE ControllerInvoke(
 {
     ControllerHandler *handler = (ControllerHandler *)This;
     App *app = handler->app;
+    HRESULT acceleratorHr;
     HRESULT hr;
 
     if (app->closing || app->window == NULL || !IsWindow(app->window)) {
@@ -596,6 +837,7 @@ static HRESULT STDMETHODCALLTYPE ControllerInvoke(
         FailApp(app, L"The WebView2 navigation controls could not be initialized.", hr);
         return S_OK;
     }
+    UpdateNavigationControls(app->window);
     ResizeWebView(app);
     hr = ICoreWebView2Controller_put_IsVisible(app->controller, TRUE);
     if (FAILED(hr)) {
@@ -609,9 +851,14 @@ static HRESULT STDMETHODCALLTYPE ControllerInvoke(
         FailApp(app, L"WebView2 startup could not be monitored.", HRESULT_FROM_WIN32(GetLastError()));
         return S_OK;
     }
+    acceleratorHr = RegisterAcceleratorKeyPressedHandler(app);
     hr = ICoreWebView2_Navigate(app->webview, app->initialUrl);
     if (FAILED(hr)) {
-        FailApp(app, L"The local Ageatopia page could not be opened.", hr);
+        KillTimer(app->window, TIMER_WEBVIEW_STARTUP);
+        SetStatus(app, L"Could not open the dashboard. Use Reload or Home.");
+        UpdateNavigationControls(app->window);
+    } else if (FAILED(acceleratorHr)) {
+        SetStatus(app, L"Keyboard shortcuts could not be initialized. Use the toolbar.");
     }
     return S_OK;
 }
@@ -644,9 +891,9 @@ static HRESULT STDMETHODCALLTYPE NavigationInvoke(
         if (!StartWebViewTimeout(
                 app,
                 STARTUP_STAGE_NAVIGATION,
-                L"Loading Ageatopia...")) {
+                L"Loading page...")) {
             ICoreWebView2NavigationStartingEventArgs_put_Cancel(args, TRUE);
-            FailApp(app, L"WebView2 startup could not be monitored.", HRESULT_FROM_WIN32(GetLastError()));
+            SetStatus(app, L"Could not track the page load. Use Reload or Home.");
         }
     } else {
         ICoreWebView2NavigationStartingEventArgs_put_Cancel(args, TRUE);
@@ -721,7 +968,142 @@ static HRESULT STDMETHODCALLTYPE NavigationCompletedInvoke(
         if (app->window != NULL) {
             KillTimer(app->window, TIMER_WEBVIEW_STARTUP);
         }
-        SetStatus(app, succeeded ? L"Ready" : L"The local page could not be loaded.");
+        SetStatus(app, succeeded
+            ? L"Ready"
+            : L"Could not load the page. Use Reload or Home.");
+        UpdateNavigationControls(app->window);
+    }
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE DownloadStartingInvoke(
+    ICoreWebView2DownloadStartingEventHandler *This,
+    ICoreWebView2 *sender,
+    ICoreWebView2DownloadStartingEventArgs *args)
+{
+    DownloadStartingHandler *handler = (DownloadStartingHandler *)This;
+    App *app = handler->app;
+    LPWSTR defaultPath = NULL;
+    LPCWSTR fileName = L"Ageatopia-export";
+    WCHAR selectedPath[APP_DATA_DIR_CAPACITY];
+    WCHAR filter[] = L"All files (*.*)\0*.*\0\0";
+    OPENFILENAMEW dialog;
+    LPCWSTR separator;
+    LPCWSTR forwardSeparator;
+    HRESULT hr;
+    DWORD dialogError;
+
+    UNREFERENCED_PARAMETER(sender);
+    if (args == NULL) {
+        return E_POINTER;
+    }
+
+    if (SUCCEEDED(ICoreWebView2DownloadStartingEventArgs_get_ResultFilePath(
+            args, &defaultPath)) && defaultPath != NULL && defaultPath[0] != L'\0') {
+        separator = wcsrchr(defaultPath, L'\\');
+        forwardSeparator = wcsrchr(defaultPath, L'/');
+        if (separator == NULL ||
+            (forwardSeparator != NULL && forwardSeparator > separator)) {
+            separator = forwardSeparator;
+        }
+        if (separator != NULL && separator[1] != L'\0') {
+            fileName = separator + 1;
+        } else if (separator == NULL) {
+            fileName = defaultPath;
+        }
+    }
+    ZeroMemory(selectedPath, sizeof(selectedPath));
+    if (FAILED(StringCchCopyW(selectedPath, ARRAYSIZE(selectedPath), fileName))) {
+        StringCchCopyW(selectedPath, ARRAYSIZE(selectedPath), L"Ageatopia-export");
+    }
+    CoTaskMemFree(defaultPath);
+
+    ZeroMemory(&dialog, sizeof(dialog));
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = app->window;
+    dialog.lpstrFilter = filter;
+    dialog.lpstrFile = selectedPath;
+    dialog.nMaxFile = (DWORD)ARRAYSIZE(selectedPath);
+    dialog.lpstrTitle = L"Save Ageatopia export";
+    dialog.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+    if (!GetSaveFileNameW(&dialog)) {
+        dialogError = CommDlgExtendedError();
+        ICoreWebView2DownloadStartingEventArgs_put_Cancel(args, TRUE);
+        ICoreWebView2DownloadStartingEventArgs_put_Handled(args, TRUE);
+        SetStatus(app, dialogError == 0
+            ? L"Export canceled. The observatory remains open."
+            : L"The save dialog failed. The export was canceled.");
+        return S_OK;
+    }
+
+    hr = ICoreWebView2DownloadStartingEventArgs_put_ResultFilePath(args, selectedPath);
+    if (SUCCEEDED(hr)) {
+        hr = ICoreWebView2DownloadStartingEventArgs_put_Handled(args, TRUE);
+    }
+    if (FAILED(hr)) {
+        ICoreWebView2DownloadStartingEventArgs_put_Cancel(args, TRUE);
+        ICoreWebView2DownloadStartingEventArgs_put_Handled(args, TRUE);
+        SetStatus(app, L"The export could not be saved. Use Reload or Home to continue.");
+        return S_OK;
+    }
+
+    SetStatus(app, L"Saving export. The observatory remains open.");
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE AcceleratorKeyPressedInvoke(
+    ICoreWebView2AcceleratorKeyPressedEventHandler *This,
+    ICoreWebView2Controller *sender,
+    ICoreWebView2AcceleratorKeyPressedEventArgs *args)
+{
+    AcceleratorKeyPressedHandler *handler = (AcceleratorKeyPressedHandler *)This;
+    App *app = handler->app;
+    COREWEBVIEW2_KEY_EVENT_KIND eventKind;
+    UINT virtualKey;
+    BOOL altDown;
+    BOOL controlDown;
+    UINT command = 0;
+    HRESULT hr;
+
+    UNREFERENCED_PARAMETER(sender);
+    if (args == NULL) {
+        return E_POINTER;
+    }
+    hr = ICoreWebView2AcceleratorKeyPressedEventArgs_get_KeyEventKind(args, &eventKind);
+    if (FAILED(hr)) {
+        return hr;
+    }
+    if (eventKind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN &&
+        eventKind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN) {
+        return S_OK;
+    }
+    hr = ICoreWebView2AcceleratorKeyPressedEventArgs_get_VirtualKey(args, &virtualKey);
+    if (FAILED(hr)) {
+        return hr;
+    }
+
+    altDown = (GetKeyState(VK_MENU) & 0x8000) != 0;
+    controlDown = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    if (altDown && !controlDown && virtualKey == VK_LEFT) {
+        command = IDM_NAV_BACK;
+    } else if (altDown && !controlDown && virtualKey == VK_RIGHT) {
+        command = IDM_NAV_FORWARD;
+    } else if (altDown && !controlDown && virtualKey == VK_HOME) {
+        command = IDM_NAV_HOME;
+    } else if (!altDown && !controlDown && virtualKey == VK_F5) {
+        command = IDM_NAV_RELOAD;
+    } else if (!altDown && controlDown && virtualKey == 'R') {
+        command = IDM_NAV_RELOAD;
+    }
+
+    if (command != 0 && app->window != NULL) {
+        hr = ICoreWebView2AcceleratorKeyPressedEventArgs_put_Handled(args, TRUE);
+        if (FAILED(hr)) {
+            return hr;
+        }
+        if (!PostMessageW(app->window, WM_COMMAND, MAKEWPARAM(command, 0), 0)) {
+            ICoreWebView2AcceleratorKeyPressedEventArgs_put_Handled(args, FALSE);
+        }
     }
     return S_OK;
 }
@@ -747,6 +1129,7 @@ static HMENU CreateAppMenu(void)
 
     if (!AppendMenuW(navigate, MF_STRING, IDM_NAV_BACK, L"&Back") ||
         !AppendMenuW(navigate, MF_STRING, IDM_NAV_FORWARD, L"&Forward") ||
+        !AppendMenuW(navigate, MF_STRING, IDM_NAV_HOME, L"&Home") ||
         !AppendMenuW(navigate, MF_SEPARATOR, 0, NULL) ||
         !AppendMenuW(navigate, MF_STRING, IDM_NAV_RELOAD, L"&Reload") ||
         !AppendMenuW(file, MF_STRING, IDM_FILE_EXIT, L"E&xit")) {
@@ -770,24 +1153,93 @@ static HMENU CreateAppMenu(void)
     return menu;
 }
 
-static void UpdateNavigationMenu(HWND window)
+static void UpdateNavigationControls(HWND window)
 {
     HMENU menu = GetMenu(window);
     BOOL canGoBack = FALSE;
     BOOL canGoForward = FALSE;
 
-    if (menu == NULL) {
-        return;
-    }
     if (g_app.webview != NULL) {
         ICoreWebView2_get_CanGoBack(g_app.webview, &canGoBack);
         ICoreWebView2_get_CanGoForward(g_app.webview, &canGoForward);
     }
-    EnableMenuItem(menu, IDM_NAV_BACK, MF_BYCOMMAND | (canGoBack ? MF_ENABLED : MF_GRAYED));
-    EnableMenuItem(
-        menu,
-        IDM_NAV_FORWARD,
-        MF_BYCOMMAND | (canGoForward ? MF_ENABLED : MF_GRAYED));
+    if (g_app.toolbar != NULL) {
+        SendMessageW(g_app.toolbar, TB_ENABLEBUTTON, IDM_NAV_BACK, MAKELPARAM(canGoBack, 0));
+        SendMessageW(
+            g_app.toolbar,
+            TB_ENABLEBUTTON,
+            IDM_NAV_FORWARD,
+            MAKELPARAM(canGoForward, 0));
+        SendMessageW(
+            g_app.toolbar,
+            TB_ENABLEBUTTON,
+            IDM_NAV_HOME,
+            MAKELPARAM(g_app.webview != NULL, 0));
+        SendMessageW(
+            g_app.toolbar,
+            TB_ENABLEBUTTON,
+            IDM_NAV_RELOAD,
+            MAKELPARAM(g_app.webview != NULL, 0));
+    }
+    if (menu != NULL) {
+        EnableMenuItem(menu, IDM_NAV_BACK, MF_BYCOMMAND | (canGoBack ? MF_ENABLED : MF_GRAYED));
+        EnableMenuItem(
+            menu,
+            IDM_NAV_FORWARD,
+            MF_BYCOMMAND | (canGoForward ? MF_ENABLED : MF_GRAYED));
+        EnableMenuItem(
+            menu,
+            IDM_NAV_HOME,
+            MF_BYCOMMAND | (g_app.webview != NULL ? MF_ENABLED : MF_GRAYED));
+        EnableMenuItem(
+            menu,
+            IDM_NAV_RELOAD,
+            MF_BYCOMMAND | (g_app.webview != NULL ? MF_ENABLED : MF_GRAYED));
+    }
+}
+
+static void HandleNavigationCommand(App *app, UINT command)
+{
+    HRESULT hr = E_FAIL;
+    BOOL canNavigate = FALSE;
+
+    if (app->webview == NULL) {
+        return;
+    }
+    switch (command) {
+    case IDM_NAV_BACK:
+        if (SUCCEEDED(ICoreWebView2_get_CanGoBack(app->webview, &canNavigate)) && canNavigate) {
+            hr = ICoreWebView2_GoBack(app->webview);
+        } else {
+            return;
+        }
+        break;
+    case IDM_NAV_FORWARD:
+        if (SUCCEEDED(ICoreWebView2_get_CanGoForward(app->webview, &canNavigate)) && canNavigate) {
+            hr = ICoreWebView2_GoForward(app->webview);
+        } else {
+            return;
+        }
+        break;
+    case IDM_NAV_HOME:
+        hr = ICoreWebView2_Navigate(app->webview, app->initialUrl);
+        break;
+    case IDM_NAV_RELOAD:
+        hr = ICoreWebView2_Reload(app->webview);
+        break;
+    default:
+        return;
+    }
+
+    if (FAILED(hr)) {
+        if (app->window != NULL) {
+            KillTimer(app->window, TIMER_WEBVIEW_STARTUP);
+        }
+        SetStatus(app, L"Could not navigate. Use Reload or Home to continue.");
+    }
+    if (app->window != NULL) {
+        UpdateNavigationControls(app->window);
+    }
 }
 
 static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -811,11 +1263,18 @@ static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPA
         if (g_app.status == NULL) {
             return -1;
         }
+        if (!CreateNavigationToolbar(&g_app)) {
+            return -1;
+        }
+        ApplyNativeMessageFont(&g_app);
         SetStatus(&g_app, L"Starting WebView2...");
+        LayoutToolbar(&g_app);
         LayoutStatus(&g_app);
+        UpdateNavigationControls(window);
         return 0;
 
     case WM_SIZE:
+        LayoutToolbar(&g_app);
         LayoutStatus(&g_app);
         ResizeWebView(&g_app);
         return 0;
@@ -832,13 +1291,15 @@ static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPA
                 suggested->bottom - suggested->top,
                 SWP_NOZORDER | SWP_NOACTIVATE);
         }
+        ApplyNativeMessageFont(&g_app);
+        LayoutToolbar(&g_app);
         LayoutStatus(&g_app);
         ResizeWebView(&g_app);
         return 0;
     }
 
     case WM_INITMENUPOPUP:
-        UpdateNavigationMenu(window);
+        UpdateNavigationControls(window);
         return 0;
 
     case WM_TIMER:
@@ -848,7 +1309,9 @@ static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPA
             } else if (g_app.startupStage == STARTUP_STAGE_CONTROLLER) {
                 FailApp(&g_app, L"The WebView2 browser did not initialize within 30 seconds.", HRESULT_FROM_WIN32(ERROR_TIMEOUT));
             } else {
-                FailApp(&g_app, L"The local dashboard did not finish loading within 30 seconds.", HRESULT_FROM_WIN32(ERROR_TIMEOUT));
+                KillTimer(window, TIMER_WEBVIEW_STARTUP);
+                SetStatus(&g_app, L"Page load timed out. Use Reload or Home to continue.");
+                UpdateNavigationControls(window);
             }
             return 0;
         }
@@ -857,19 +1320,10 @@ static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPA
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
         case IDM_NAV_BACK:
-            if (g_app.webview != NULL) {
-                ICoreWebView2_GoBack(g_app.webview);
-            }
-            return 0;
         case IDM_NAV_FORWARD:
-            if (g_app.webview != NULL) {
-                ICoreWebView2_GoForward(g_app.webview);
-            }
-            return 0;
+        case IDM_NAV_HOME:
         case IDM_NAV_RELOAD:
-            if (g_app.webview != NULL) {
-                ICoreWebView2_Reload(g_app.webview);
-            }
+            HandleNavigationCommand(&g_app, LOWORD(wParam));
             return 0;
         case IDM_FILE_EXIT:
             PostMessageW(window, WM_CLOSE, 0, 0);
@@ -887,7 +1341,18 @@ static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPA
         return 0;
 
     case WM_NCDESTROY:
+        if (g_app.toolbar != NULL && IsWindow(g_app.toolbar)) {
+            SendMessageW(g_app.toolbar, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), FALSE);
+        }
+        if (g_app.status != NULL && IsWindow(g_app.status)) {
+            SendMessageW(g_app.status, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), FALSE);
+        }
+        if (g_app.messageFont != NULL) {
+            DeleteObject(g_app.messageFont);
+            g_app.messageFont = NULL;
+        }
         g_app.window = NULL;
+        g_app.toolbar = NULL;
         g_app.status = NULL;
         break;
 
@@ -944,6 +1409,12 @@ static HMENU CreateWindowMenuOrReport(void)
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance, PWSTR commandLine, int showCommand)
 {
+    ACCEL shortcuts[] = {
+        {FVIRTKEY | FALT, VK_LEFT, IDM_NAV_BACK},
+        {FVIRTKEY | FALT, VK_RIGHT, IDM_NAV_FORWARD},
+        {FVIRTKEY | FALT, VK_HOME, IDM_NAV_HOME},
+        {FVIRTKEY, VK_F5, IDM_NAV_RELOAD},
+        {FVIRTKEY | FCONTROL, 'R', IDM_NAV_RELOAD}};
     INITCOMMONCONTROLSEX controls;
     WNDCLASSEXW windowClass;
     LPWSTR *arguments;
@@ -954,6 +1425,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance, PWSTR comman
     MSG message;
     int messageResult;
     EnvironmentHandler *environmentHandler;
+    HACCEL accelerators;
 
     UNREFERENCED_PARAMETER(previousInstance);
     UNREFERENCED_PARAMETER(commandLine);
@@ -1063,9 +1535,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance, PWSTR comman
         return 1;
     }
 
+    accelerators = CreateAcceleratorTableW(shortcuts, (int)ARRAYSIZE(shortcuts));
     while ((messageResult = GetMessageW(&message, NULL, 0, 0)) > 0) {
+        if (accelerators != NULL && TranslateAcceleratorW(window, accelerators, &message)) {
+            continue;
+        }
         TranslateMessage(&message);
         DispatchMessageW(&message);
+    }
+    if (accelerators != NULL) {
+        DestroyAcceleratorTable(accelerators);
     }
     if (messageResult == -1) {
         ReportFailure(&g_app, L"The Ageatopia message loop stopped unexpectedly.", HRESULT_FROM_WIN32(GetLastError()));
