@@ -21,7 +21,9 @@ async def test_maintenance_command_palette_and_exit(tmp_path):
         assert len(app.screen_stack) == 2
         await pilot.press("escape")
         app._write("Successfully installed example [literal]")
+        app.query_one("#model-name").focus()
         await pilot.press("ctrl+c")
+        assert app._exit
 
 
 @pytest.mark.parametrize(

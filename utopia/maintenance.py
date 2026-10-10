@@ -11,6 +11,7 @@ import httpx
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Button, Footer, Header, Input, Label, LoadingIndicator, RichLog, Static
 from textual.worker import Worker, WorkerState
@@ -38,7 +39,7 @@ class MaintenanceApp(App):
     #maintenance-log { height: 1fr; border: round $primary-darken-2; }
     """
 
-    BINDINGS = [("ctrl+c", "quit", "Exit")]
+    BINDINGS = [Binding("ctrl+c", "quit", "Exit", priority=True)]
 
     def __init__(self, config_path=DEFAULT_CONFIG):
         super().__init__()
