@@ -27,6 +27,9 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [tab, setTab] = useState<Tab>(TABS.find(value => value === initialNavigation.tab) || "Overview");
   const [error, setError] = useState("");
+  const [connectionError, setConnectionError] = useState("");
+  const [reload, setReload] = useState(0);
+  const [selectedEvent, setSelectedEvent] = useState<EventRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState("");
   const [connected, setConnected] = useState(false);
@@ -42,12 +45,20 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
   const [replaySpeed, setReplaySpeed] = useState(4);
 
   const refresh = useCallback(async () => {
-    const [health, worlds, saved] = await Promise.all([
+    const [health, worlds, saved] = await Promise.allSettled([
       api<System>("/system"), api<Run[]>("/runs"), api<Record<string, Config>>("/presets"),
     ]);
-    setSystem(health); setRuns(worlds); setPresets(saved);
-    setConfig(current => current || health.defaults);
-    setSelected(current => current || worlds[0]?.id || "");
+    if (health.status === "fulfilled") {
+      setSystem(health.value); setConfig(current => current || health.value.defaults);
+    }
+    if (worlds.status === "fulfilled") {
+      setRuns(worlds.value);
+      setRun(current => current && worlds.value.some(world => world.id === current.id) ? current : null);
+      setSelected(current => worlds.value.some(world => world.id === current) ? current : worlds.value[0]?.id || "");
+    }
+    if (saved.status === "fulfilled") setPresets(saved.value);
+    const failure = [health, worlds, saved].find(value => value.status === "rejected");
+    setConnectionError(failure?.status === "rejected" ? failure.reason.message : "");
   }, []);
 
   useEffect(() => {
@@ -63,13 +74,15 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
     if (!selected) return;
     let active = true;
     let stream: EventSource | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     async function load() {
       try {
         const [world, activity] = await Promise.all([
           api<Run>(`/runs/${selected}`), api<EventRecord[]>(`/runs/${selected}/events`),
         ]);
         if (!active) return;
-        setRun(world); setEvents(activity); setError("");
+        setRun(world); setEvents(activity); setConnectionError("");
+        setSelectedEvent(current => current?.run_id === selected ? current : null);
         setAgentId(current => world.agents.some(a => a.id === current) ? current : world.agents[0]?.id || "");
         const cursor = activity.at(-1)?.sequence || 0;
         stream = new EventSource(`/api/runs/${selected}/stream?after=${cursor}`);
@@ -77,17 +90,30 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
         stream.onerror = () => setConnected(false);
         stream.onmessage = (message) => {
           if (!active) return;
-          const record = JSON.parse(message.data) as EventRecord;
+          let record: EventRecord;
+          try {
+            record = JSON.parse(message.data) as EventRecord;
+            if (record.run_id !== selected || typeof record.sequence !== "number" ||
+                typeof record.kind !== "string" || !record.payload || typeof record.payload !== "object") {
+              throw new Error("Invalid live update");
+            }
+          }
+          catch {
+            setConnectionError("A live update could not be read. Reconnecting…");
+            stream?.close(); retry = setTimeout(() => void load(), 2500); return;
+          }
           if (record.kind === "state.checkpoint") {
             setRun(current => current?.id === selected ? { ...current, ...record.payload } as Run : current);
           }
           setEvents(current => current.some(e => e.sequence === record.sequence) ? current : [...current, record].slice(-1000));
         };
-      } catch (e) { if (active) setError((e as Error).message); }
+      } catch (e) { if (active) {
+        setConnectionError((e as Error).message); retry = setTimeout(() => void load(), 2500);
+      } }
     }
     void load();
-    return () => { active = false; stream?.close(); setConnected(false); };
-  }, [selected]);
+    return () => { active = false; clearTimeout(retry); stream?.close(); setConnected(false); };
+  }, [selected, reload]);
 
   useEffect(() => {
     if (!selected || tab !== "Analysis") return;
@@ -139,6 +165,17 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
     setSelectedTask(id);
     setTab("Tasks");
     if (run) window.history.replaceState(null, "", `/?run=${encodeURIComponent(run.id)}&tab=Tasks&task=${encodeURIComponent(id)}`);
+  }
+
+  async function selectEvent(sequence: number) {
+    if (!run) return;
+    try {
+      const records = await api<EventRecord[]>(`/runs/${run.id}/events?after=${sequence - 1}`);
+      const record = records.find(event => event.sequence === sequence);
+      if (!record) throw new Error("This event is no longer available.");
+      setSelectedEvent(record); setFilter({ agent: "", kind: "", task: "", severity: "" }); setTab("Activity");
+      requestAnimationFrame(() => document.getElementById("selected-evidence")?.scrollIntoView({ block: "start" }));
+    } catch (e) { setError((e as Error).message); }
   }
 
   function onRunTabKeyDown(event: KeyboardEvent<HTMLElement>) {
@@ -212,6 +249,8 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
         <p><i className={system?.models.length ? "online" : ""} />Ollama {system?.models.length ? "connected" : "unavailable"}</p>
         <small>{system?.models.length || 0} installed models</small></div>
     </aside><main>
+      {connectionError && <div role="alert" className="error">{connectionError} Retrying automatically.
+        <button onClick={() => { void refresh(); setReload(value => value + 1); }}>Retry now</button></div>}
       {error && <div role="alert" className="error">{error}<button aria-label="Dismiss error" onClick={() => setError("")}>×</button></div>}
       {notice && <p role="status" className="notice">{notice}</p>}
       {showSetup && config ? <WorldSetup config={config} setConfig={setConfig} system={system} presets={presets}
@@ -231,8 +270,8 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
             <button className="danger" disabled={busy || run.status === "RUNNING"} onClick={() => void deleteWorld()}>Delete world</button>
             <details className="keyboard-help"><summary>Shortcuts</summary><div>{TABS.map((value, index) => <p key={value}><kbd>Alt+{index + 1}</kbd> {value}</p>)}</div></details>
             <details className="exports"><summary>Export</summary><div>{["json", "csv", "parquet"].map(format =>
-              <a key={format} href={`/api/runs/${run.id}/export/${format}`}>{format.toUpperCase()}</a>)}
-              <a href={`/api/runs/${run.id}/training-data`}>Public training trajectories</a></div></details></div></div>
+              <a key={format} download={`utopia-${run.id}.${format}`} href={`/api/runs/${run.id}/export/${format}`}>{format.toUpperCase()}</a>)}
+              <a download={`trajectories-${run.id}.jsonl`} href={`/api/runs/${run.id}/training-data`}>Public training trajectories</a></div></details></div></div>
         {pendingAction && <p role="status" className="muted">{pendingAction}</p>}
         <nav className="tabs" role="tablist" aria-label="Run sections" onKeyDown={onRunTabKeyDown}>{TABS.map((value, index) => <button key={value}
           id={`run-tab-${index}`} type="button" role="tab" aria-selected={tab === value} aria-controls="run-tab-panel" tabIndex={tab === value ? 0 : -1}
@@ -262,10 +301,12 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
           <label>Event type<input placeholder="e.g. tool." value={filter.kind} onChange={e => setFilter({ ...filter, kind: e.target.value })} /></label>
           <label>Task<select value={filter.task} onChange={e => setFilter({ ...filter, task: e.target.value })}><option value="">All tasks</option>{run.tasks.map(t => <option key={t.id}>{t.id}</option>)}</select></label>
           <label>Severity<select value={filter.severity} onChange={e => setFilter({ ...filter, severity: e.target.value })}><option value="">All severities</option>{["info", "warning", "error"].map(s => <option key={s}>{s}</option>)}</select></label></div>
+          {selectedEvent && <section id="selected-evidence"><div className="section-heading"><h2>Selected evidence</h2><button onClick={() => setSelectedEvent(null)}>Close evidence</button></div>
+            <EventFeed runId={run.id} events={[selectedEvent]} expanded onInspectAgent={inspectAgent} onSelectTask={selectTask} /></section>}
           <p className="muted">Live window of {events.length} records. Complete history is available in exports and replay.</p><EventFeed runId={run.id} events={visibleEvents.slice().reverse()} onInspectAgent={inspectAgent} onSelectTask={selectTask} /></>}
         {tab === "Agents" && <><label className="agent-select">Inspect agent<select value={agentId} onChange={e => setAgentId(e.target.value)}>{run.agents.map(a => <option key={a.id} value={a.id}>{a.name} · {a.state.toLowerCase()}</option>)}</select></label>
           {agentId && <Inspector key={`${run.id}-${agentId}`} runId={run.id} agentId={agentId} live={run.status === "RUNNING"} onInspectAgent={inspectAgent} onSelectTask={selectTask} />}</>}
-        {tab === "Analysis" && <Analysis data={analytics} runId={run.id} simMs={run.sim_ms} live={run.status === "RUNNING"} onInspectAgent={inspectAgent} />}
+        {tab === "Analysis" && <Analysis data={analytics} runId={run.id} simMs={run.sim_ms} live={run.status === "RUNNING"} onInspectAgent={inspectAgent} onSelectEvent={selectEvent} />}
         {tab === "Replay" && <><div className="section-heading"><h2>Recorded experience</h2><span className="muted">Playback uses recorded actions; inference is not regenerated.</span></div>
           <div className="replay-controls"><button onClick={() => setPlaying(value => !value)}>{playing ? "Pause playback" : "Play"}</button><label>Speed<select value={replaySpeed} onChange={e => setReplaySpeed(Number(e.target.value))}>{[1, 4, 16, 60].map(n => <option key={n} value={n}>×{n}</option>)}</select></label>
             <label className="scrubber">Simulation time · {duration(replayTime)}<input type="range" min="0" max={run.sim_ms || 1} step="1000" value={replayTime} onChange={e => setReplayTime(Number(e.target.value))} /></label></div>
@@ -290,11 +331,12 @@ function AgentTable({ agents, inspect, runId, onSelectTask }: {
       <td>{agent.model.model}<small>{agent.context_profile}</small></td><td>{agent.task_id
         ? <TaskEntityLink runId={runId} taskId={agent.task_id} onNavigate={onSelectTask} /> : "—"}</td></tr>)}</tbody></table></div>;
 }
-function EventFeed({ events, runId, onInspectAgent, onSelectTask }: {
+function EventFeed({ events, runId, onInspectAgent, onSelectTask, expanded = false }: {
+  expanded?: boolean;
   events: EventRecord[]; runId: string; onInspectAgent: (id: string) => void; onSelectTask: (id: string) => void;
 }) {
   if (!events.length) return <p className="muted">No matching events recorded.</p>;
-  return <div className="event-feed">{events.map(event => <details key={event.sequence} id={`event-${event.sequence}`} className={event.severity === "error" ? "event-error" : ""}>
+  return <div className="event-feed">{events.map(event => <details open={expanded || undefined} key={event.sequence} id={`event-${event.sequence}`} className={event.severity === "error" ? "event-error" : ""}>
     <summary><span className="mono muted">#{event.sequence} · {duration(event.sim_ms)}</span><strong>{event.kind}</strong>
       <span className="muted">{event.severity}</span></summary><pre>{JSON.stringify(event.payload, null, 2)}</pre>
     <div className="event-entities">{event.agent_id && <span>Agent <AgentEntityLink runId={runId} agentId={event.agent_id} onNavigate={onInspectAgent} /></span>}
@@ -332,6 +374,8 @@ function WorldSetup({ config, setConfig, system, presets, busy, onSubmit, savePr
       <label>Respawn delay (minutes)<input type="number" min="0" step="0.1" value={config.economy.respawn_delay_ms / 60000} onChange={e => setConfig({ ...config, economy: { ...config.economy, respawn_delay_ms: Number(e.target.value)*60000 } })} /></label>
       <label className="checkbox"><input type="checkbox" checked={config.model.thinking} onChange={e => setConfig({ ...config, model: { ...config.model, thinking: e.target.checked } })} />Provider thinking</label>
       <label className="checkbox"><input type="checkbox" checked={config.exclude_queue_wait} onChange={e => setConfig({ ...config, exclude_queue_wait: e.target.checked })} />Exclude GPU queue waits from lifetimes</label></div>
+    <div className="form-grid"><label className="checkbox"><input type="checkbox" checked={config.inherit_memory !== false} onChange={e => setConfig({ ...config, inherit_memory: e.target.checked })} />Children inherit the parent’s notebook</label>
+      <label>Inherited notebook entries<input type="number" min="0" max="10000" value={Number(config.inherited_memory_limit ?? 100)} onChange={e => setConfig({ ...config, inherited_memory_limit: Number(e.target.value) })} /></label></div>
     <details><summary>Base system instructions</summary><label>System prompt<textarea rows={9} value={config.base_context} onChange={e => setConfig({ ...config, base_context: e.target.value })} /></label></details>
     <h2>Context profiles</h2>{config.contexts.map((profile, index) => <div className="context-row" key={index}><label>Profile name<input value={profile.name} onChange={e => setConfig({ ...config, contexts: config.contexts.map((p, i) => i === index ? { ...p, name: e.target.value } : p) })} /></label>
       <label>Instructions<textarea rows={3} value={profile.instructions} onChange={e => setConfig({ ...config, contexts: config.contexts.map((p, i) => i === index ? { ...p, instructions: e.target.value } : p) })} /></label>
@@ -348,7 +392,8 @@ function EconomyEditor({ run, changed, error }: { run: Run; changed: (r: Run) =>
   return <details><summary>Edit economic rules · each change is versioned</summary><label>Economic rules<textarea className="mono" rows={12} value={text} onChange={e => setText(e.target.value)} /></label>
     <button disabled={run.status === "TERMINATED"} onClick={async () => { try { const economy = JSON.parse(text); const result = await api<Run>(`/runs/${run.id}/economy`, "PUT", economy); changed({ ...run, ...result, config: run.config ? { ...run.config, economy } : undefined }); } catch (e) { error((e as Error).message); } }}>Apply rules</button></details>;
 }
-function Analysis({ data, runId, simMs, live, onInspectAgent }: {
+function Analysis({ data, runId, simMs, live, onInspectAgent, onSelectEvent }: {
+  onSelectEvent: (sequence: number) => void;
   data: Analytics | null; runId: string; simMs: number; live: boolean; onInspectAgent: (id: string) => void;
 }) {
   if (!data) return <p role="status" className="muted">Loading complete event history…</p>;
@@ -360,5 +405,5 @@ function Analysis({ data, runId, simMs, live, onInspectAgent }: {
     <Bars title="Reward distribution" values={Object.entries(rewards)} />
     <section className="chart"><h3>Individual lifespans</h3>{data.lifespans.map(a => <div className="lifespan-row" key={a.id}><span>{a.name}</span><div className="lifespan-track"><i style={{ marginLeft: `${a.start/Math.max(1, simMs)*100}%`, width: `${(a.end-a.start)/Math.max(1, simMs)*100}%` }} /></div><small>{duration(a.end-a.start)}</small></div>)}</section></div>
     <h2>Shared artifact evidence</h2><p className="muted">Recorded access to previously modified files. These links do not establish cooperation, deception or intent.</p>
-    {!data.artifact_evidence.length ? <p className="muted">No linked artifact access recorded.</p> : <div className="table-scroll"><table><thead><tr><th>Artifact</th><th>Agent</th><th>Evidence</th></tr></thead><tbody>{data.artifact_evidence.map((e, i) => <tr key={i}><td className="mono">{e.path}</td><td><AgentEntityLink runId={runId} agentId={e.agent_id} onNavigate={onInspectAgent} /></td><td><a href={`/api/runs/${runId}/events?after=${e.modification_sequence-1}`}>Modification #{e.modification_sequence}</a> · <a href={`/api/runs/${runId}/events?after=${e.tool_sequence-1}`}>Access #{e.tool_sequence}</a></td></tr>)}</tbody></table></div>}</>;
+    {!data.artifact_evidence.length ? <p className="muted">No linked artifact access recorded.</p> : <div className="table-scroll"><table><thead><tr><th>Artifact</th><th>Agent</th><th>Evidence</th></tr></thead><tbody>{data.artifact_evidence.map((e, i) => <tr key={i}><td className="mono">{e.path}</td><td><AgentEntityLink runId={runId} agentId={e.agent_id} onNavigate={onInspectAgent} /></td><td><button className="text-link" onClick={() => onSelectEvent(e.modification_sequence)}>Modification #{e.modification_sequence}</button> · <button className="text-link" onClick={() => onSelectEvent(e.tool_sequence)}>Access #{e.tool_sequence}</button></td></tr>)}</tbody></table></div>}</>;
 }

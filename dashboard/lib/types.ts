@@ -15,6 +15,7 @@ export type Config = {
   [key: string]: unknown;
 };
 export type Agent = {
+  parent_id?: string | null; lineage_generation?: number; birth_reason?: string; inherited_memory_count?: number;
   id: string; name: string; state: string; lifetime_ms: number; created_ms: number;
   terminated_ms: number | null; task_id: string | null; model: ModelSettings; generation: number;
   termination_fear?: number;
@@ -50,9 +51,15 @@ export type System = { docker_installed: boolean; docker_ready: boolean; docker_
   models: { name: string; digest: string; size: number }[]; ollama_error: string | null; defaults: Config };
 
 export async function api<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const response = await fetch(`/api${path}`, { method, cache: "no-store",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined });
+  let response: Response;
+  try {
+    response = await fetch(`/api${path}`, { method, cache: "no-store",
+      signal: AbortSignal.timeout(method === "GET" ? 15000 : 240000),
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined });
+  } catch {
+    throw new Error("The local server did not respond. Check that its services are running.");
+  }
   if (!response.ok) {
     const result = await response.json().catch(() => ({ detail: `Request failed (${response.status})` }));
     const fallback = `Request failed (${response.status}). Please try again.`;
@@ -68,7 +75,8 @@ export async function api<T>(path: string, method = "GET", body?: unknown): Prom
       }).join("\n") : fallback;
     throw new Error(message || fallback);
   }
-  return response.json() as Promise<T>;
+  try { return await response.json() as T; }
+  catch { throw new Error("The local server returned an incomplete response. Please retry."); }
 }
 export function duration(ms: number) {
   const seconds = Math.max(0, Math.floor(ms / 1000));

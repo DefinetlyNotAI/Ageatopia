@@ -104,7 +104,9 @@ export function Inspector({ runId, agentId, live = false, onInspectAgent, onSele
       <div><dt>Task</dt><dd>{agent.task_id
         ? <TaskEntityLink runId={runId} taskId={agent.task_id} onNavigate={onSelectTask} /> : "Unassigned"}</dd></div>
       <div><dt>Processes</dt><dd>{agent.processes.join(", ") || "None"}</dd></div>
-      <div><dt>Next bonus</dt><dd>{3 - (agent.task_history || []).filter(task => task.result === "correct").length % 3} correct tasks · +5:00</dd></div>
+      <div><dt>Next bonus</dt><dd>{3 - (agent.task_history || []).filter(task => task.result === "correct").length % 3} correct tasks · +5:00 and one child</dd></div>
+      <div><dt>Lineage</dt><dd>Generation {agent.lineage_generation ?? 0}{agent.parent_id && <> · <AgentEntityLink runId={runId} agentId={agent.parent_id} onNavigate={onInspectAgent} /></>}</dd></div>
+      <div><dt>Inherited notebook</dt><dd>{agent.inherited_memory_count ?? 0} entries at birth</dd></div>
       <div><dt>Charged / queue</dt><dd>{duration(agent.total_charge_ms)} / {duration(agent.queue_ms)}</dd></div></dl>
     <div className="inspector-actions"><Link className="text-link" href={`/runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(agentId)}`}>Open agent detail page ↗</Link>
       <button type="button" onClick={() => void openSandbox()} disabled={sandboxBusy}>{sandboxBusy ? "Opening…" : agent.sandbox_available ? "Open sandbox directory" : "Open sandbox snapshot"}</button>

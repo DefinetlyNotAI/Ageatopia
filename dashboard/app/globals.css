@@ -2,7 +2,7 @@
 
 :root { --bg:#f3f4ef; --paper:#fff; --ink:#222e2a; --muted:#66716b; --line:#dbe0d8; --accent:#25654b; --amber:#a87421; --danger:#a33c35; }
 * { box-sizing:border-box; }
-body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 Arial, Helvetica, sans-serif; }
+body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 "Segoe UI Variable", "Segoe UI", Arial, sans-serif; }
 a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
 button, input, select, textarea, summary { font:inherit; }
 button, .exports summary { padding:8px 13px; border:1px solid #bdc7bd; border-radius:4px; background:var(--paper); color:var(--ink); cursor:pointer; }
