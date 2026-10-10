@@ -95,6 +95,11 @@ def main():
         "--load-in-4bit", action="store_true", help="Train LoRA on a CUDA NF4 quantized base"
     )
     parser.add_argument(
+        "--fp16-frozen-embeddings",
+        action="store_true",
+        help="Keep frozen input embeddings in FP16 during four-bit CUDA training",
+    )
+    parser.add_argument(
         "--resume-adapter", type=Path, help="Continue a prior adapter in a new output directory"
     )
     args = parser.parse_args()
@@ -138,6 +143,9 @@ def train(args):
     parent = None
     resume = getattr(args, "resume_adapter", None)
     quantization = "nf4-double-fp16" if getattr(args, "load_in_4bit", False) else "none"
+    fp16_embeddings = getattr(args, "fp16_frozen_embeddings", False)
+    if fp16_embeddings and quantization == "none":
+        raise ValueError("FP16 frozen embeddings require four-bit CUDA training")
     if resume:
         parent = json.loads((resume / "manifest.json").read_text(encoding="utf-8"))
         if parent["model_version"] != args.model:
@@ -146,6 +154,9 @@ def train(args):
             raise ValueError("Training iteration must advance beyond the parent adapter")
         if parent.get("base_quantization", "none") != quantization:
             raise ValueError("Adapter base quantization must match this training run")
+        parent_precision = parent.get("fp16_frozen_embeddings", False)
+        if not isinstance(parent_precision, bool) or parent_precision != fp16_embeddings:
+            raise ValueError("Frozen embedding precision must match this training run")
 
     import torch
     from datasets import Dataset
@@ -195,6 +206,8 @@ def train(args):
     )
     if quantization != "none":
         model = prepare_model_for_kbit_training(model)
+        if fp16_embeddings:
+            model.get_input_embeddings().to(dtype=torch.float16)
     if resume:
         model = PeftModel.from_pretrained(model, resume, is_trainable=True)
     else:
@@ -254,6 +267,7 @@ def train(args):
         "continuous_training": False,
         "training_objective": "verified-assistant-submission-only",
         "base_quantization": quantization,
+        "fp16_frozen_embeddings": fp16_embeddings,
         "restricted_vocab_projection": restrict_logits,
         "supervised_tokens": sum(
             sum(label != -100 for label in sample["labels"]) for sample in samples

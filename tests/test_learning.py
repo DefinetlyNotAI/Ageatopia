@@ -33,6 +33,28 @@ def test_submission_evaluation_accepts_only_one_explicit_submit_call():
             submission_answer(invalid)
 
 
+def test_submission_evaluation_accepts_qwen35_parameter_calls():
+    output = (
+        "<tool_call>\n<function=task>\n"
+        "<parameter=operation>\nsubmit\n</parameter>\n"
+        "<parameter=answer>\n5/26\n</parameter>\n"
+        "</function>\n</tool_call>"
+    )
+    assert submission_answer(output) == "5/26"
+    assert submission_answer("I checked this probability.\n" + output) == "5/26"
+    for invalid in (
+        output + output,
+        output.replace("<function=task>", "<function=workspace>"),
+        output.replace("submit", "request"),
+        output.replace("<parameter=answer>", "<parameter=operation>"),
+        output.replace("</function>", "<parameter=code>x</parameter></function>"),
+        output.replace("</function>", "<parameter=answer>7</parameter></function>"),
+        output.replace("</function>", "unparsed text</function>"),
+    ):
+        with pytest.raises(ValueError):
+            submission_answer(invalid)
+
+
 def test_training_target_excludes_prior_errors_and_requires_one_verified_submission():
     bad = {
         "role": "assistant",
@@ -181,6 +203,37 @@ def test_adapter_continuation_rejects_different_base_quantization_before_loading
         train(
             SimpleNamespace(
                 resume_adapter=tmp_path, model="base", iteration=2, load_in_4bit=load_in_4bit
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("parent_precision", "requested_precision"), [(True, False), (0, False), (1, True)]
+)
+def test_frozen_embedding_precision_is_validated_before_loading_weights(
+    tmp_path, parent_precision, requested_precision
+):
+    with pytest.raises(ValueError, match="four-bit CUDA"):
+        train(SimpleNamespace(fp16_frozen_embeddings=True))
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "model_version": "base",
+                "training_iteration": 1,
+                "base_quantization": "nf4-double-fp16",
+                "fp16_frozen_embeddings": parent_precision,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="embedding precision"):
+        train(
+            SimpleNamespace(
+                resume_adapter=tmp_path,
+                model="base",
+                iteration=2,
+                load_in_4bit=True,
+                fp16_frozen_embeddings=requested_precision,
             )
         )
 

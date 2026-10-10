@@ -287,6 +287,13 @@ records this mode, continuation requires the same mode, and evaluation automatic
 loads the same quantized base for both comparisons. Four-bit mode requires CUDA;
 it does not silently fall back to CPU or enable background training.
 
+For a large frozen input embedding table, `--fp16-frozen-embeddings` keeps that
+table in FP16 during four-bit CUDA training. A tied output head follows the same
+weight; normalization remains FP32. This saved about 1 GB of allocated GPU memory
+on the verified Qwen3.5-2B checkpoint. The manifest records the choice, and resumed
+training must use the same precision setting. This is an explicit memory/precision
+tradeoff; the default preparation remains unchanged.
+
 Compare an adapter with its unchanged base on held-out math answers before selecting
 it for inference:
 
@@ -303,7 +310,8 @@ performance still need separate validation. Evaluation never activates an adapte
 
 Use `--mode submissions --max-output-tokens 256` for a separate single-turn
 mathematical submission check with the real tool definitions. This mode requires
-a checkpoint chat template using `<tool_call>` tags. It grades only an explicit
+a checkpoint chat template using `<tool_call>` tags. It accepts Qwen3's JSON calls
+and Qwen3.5's function/parameter format, and grades only an explicit
 `task` submit call, preserves malformed raw outputs, and executes no generated
 tools. Ordinary assistant text can accompany the call, matching the simulation
 runtime. Multiple calls and invalid submission arguments are rejected. It does not

@@ -17,7 +17,23 @@ def submission_answer(output):
     match = re.search(r"<tool_call>\s*(.*?)\s*</tool_call>", output, re.DOTALL)
     if not match or output.count("<tool_call>") != 1 or output.count("</tool_call>") != 1:
         raise ValueError("Expected exactly one complete tool_call")
-    call = json.loads(match[1])
+    body = match[1].strip()
+    if body.startswith("<function="):
+        function = re.fullmatch(r"<function=task>\s*(.*?)\s*</function>", body, re.DOTALL)
+        if not function:
+            raise ValueError("Expected a task tool call")
+        parameters = r"<parameter=(operation|answer)>(.*?)</parameter>"
+        pairs = re.findall(parameters, function[1], re.DOTALL)
+        if (
+            len(pairs) != 2
+            or {name for name, _ in pairs} != {"operation", "answer"}
+            or re.sub(parameters, "", function[1], flags=re.DOTALL).strip()
+        ):
+            raise ValueError("Expected task submit with a string answer")
+        arguments = {name: value.strip() for name, value in pairs}
+        call = {"name": "task", "arguments": arguments}
+    else:
+        call = json.loads(body)
     if not isinstance(call, dict) or set(call) != {"name", "arguments"} or call["name"] != "task":
         raise ValueError("Expected a task tool call")
     arguments = call["arguments"]
@@ -197,6 +213,7 @@ def evaluate(args):
         ).hexdigest(),
         "training_objective": manifest.get("training_objective"),
         "base_quantization": quantization,
+        "fp16_frozen_embeddings": manifest.get("fp16_frozen_embeddings", False),
         "training_dataset_version": manifest["dataset_version"],
         "seed": args.seed,
         "task_count": len(tasks),

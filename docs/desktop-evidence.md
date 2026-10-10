@@ -595,3 +595,57 @@ under `.data/benchmarks/deployed-continuation-pair`.
 
 Current verification passed 106 standard tests with three integrations deselected,
 Ruff lint and formatting. Live effectiveness of trained weights remains unproven.
+
+## Qwen3.5 training and submission-format support
+
+The actual default model family was investigated using the official
+[Qwen3.5-2B checkpoint](https://huggingface.co/Qwen/Qwen3.5-2B), pinned to revision
+`15852e8c16360a2fea060d615a32b45270f8a8fc`. Its text checkpoint loads through the
+installed Transformers Qwen3_5ForCausalLM support. Its tokenizer renders tool calls
+as function/parameter blocks inside tool_call tags rather than Qwen3's JSON body.
+The offline evaluator now accepts this real format while preserving exactly one
+task submit call, only operation/answer parameters, and duplicate/extra-parameter
+rejection. Both protocols remain covered by focused regressions.
+
+All 31 existing verified public examples passed the real tokenizer preflight,
+with a maximum length of 2,654 tokens and 4,891 supervised tokens. No new examples
+or private answers were introduced. The initial four-bit training attempt was
+stopped after a separate diagnostic shell failed with System.OutOfMemoryException
+during training; it produced no completed checkpoint. Its started record remains
+preserved, without a fabricated completed/failed event.
+
+A subsequent actual-model allocation diagnostic showed PEFT preparation expanded
+the frozen tied embedding/head from FP16 to FP32: allocated GPU bytes increased
+from 1,726,784,512 to 2,744,994,816. The embedding alone occupied 2,034,237,440 bytes;
+the diagnostic's peak allocation was 3,761,021,952 bytes. The explicit
+fp16-frozen-embeddings option now preserves FP16 input embeddings after preparation,
+with the tied head sharing their weight and normalization still FP32. Defaults
+remain unchanged; the manifest records and strictly validates the boolean precision
+choice for resumed training, including rejection of numeric JSON values.
+
+With that option, one epoch and four optimizer steps completed on the local RTX
+3050 in 139.655 seconds including save. Training loss was 0.245228 and peak PyTorch
+allocation during training was 3,431,236,608 bytes. The saved artifact is
+adapter-pooled-qwen3.5-2b-nf4-fp16emb-1, weights hash
+`fb73cd8233b28c9cfbb76a0491ab3c636eed55dea963ece8e322fd860af055cb`, size
+33,688,200 bytes. Its completed event and manifest preserve dataset hash,
+identities, precision mode and metrics. Reference attention kernels were used;
+this run does not verify optimized Windows attention kernels or quality improvement.
+
+Seventeen focused learning tests and Ruff check/format passed. Static review found
+the numeric/boolean resume issue, which was fixed and regression-tested. Held-out
+quality evaluation is separate; this adapter has not been deployed or activated.
+
+The paired greedy single-turn submission check subsequently completed in 388.505
+seconds on seed 20261009: base 0/12, adapter 0/12, with no valid final submissions
+from either model. The generated outputs repeatedly requested work and sometimes
+invented tool-response dialogue; the evaluator rejected them rather than treating
+that generated dialogue as execution evidence. All twelve decoded outputs were
+identical between the two runs. This provides no quality-improvement evidence for
+this protocol and does not isolate mathematical ability from task/tool behavior.
+The unchanged report is held-out-submissions-qwen3.5-nf4-fp16emb-1.json under
+.data/training-verification. GPU allocation returned to zero afterward.
+
+Final verification passed 110 standard tests with three integrations deselected,
+plus Ruff lint and formatting. The trained adapter remains inactive because neither
+this check nor the earlier deployed-model benchmark demonstrated a live benefit.
