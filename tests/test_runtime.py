@@ -515,6 +515,20 @@ async def test_docker_recovery_retains_existing_container_and_volume(monkeypatch
     assert commands == [("inspect", "--format", "{{.State.Running}}", sandbox.name)]
 
 
+async def test_resume_does_not_reserve_existing_sandbox_limit_again(engine, monkeypatch):
+    runtime, _ = runtime_with(engine, [])
+    runtime.sandbox.started = True
+    engine.control("pause")
+    monkeypatch.setattr(
+        "utopia.resources.host_memory",
+        lambda: {"total_mb": 16024, "available_mb": 3230, "commit_available_mb": 1137},
+    )
+    await runtime.start("resume")
+    assert engine.state["status"] == "RUNNING"
+    assert not runtime.memory_paused
+    await runtime.stop("pause")
+
+
 async def test_stopped_container_recovery_restores_last_workspace_snapshot(monkeypatch):
     from utopia.config import ToolSettings
 

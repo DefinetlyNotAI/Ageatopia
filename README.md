@@ -69,10 +69,12 @@ server. Set `manage_ollama` to `false` when using an independently managed provi
 Closing the standalone desktop unloads models and stops the Ollama server it owns.
 
 Memory safety is enabled by default. `ram_reserve_mb` in `.data/desktop.json`
-defaults to `2048`; the RAM reserve is the greater of this value and 15% of physical RAM.
-Windows commit headroom must also retain `ram_reserve_mb`. New sandbox/model work is
-blocked when its additional budget would consume this reserve. Cold local Ollama loads
-are checked conservatively against model file size plus a context allowance; local
+defaults to `1024`; Windows commit headroom retains half this value (at least 512 MiB).
+New work is blocked when its additional budget would consume this emergency reserve.
+Resuming an existing sandbox checks a small 64 MiB buffer, rather than reserving its
+entire configured memory ceiling again. Local Ollama uses its own GPU-aware scheduler
+for automatic offloading; only explicit CPU-only models are checked against model file
+size plus a context allowance. GPU-backed requests retain a 256 MiB host buffer; local
 inference is serialized. Managed Ollama keeps at most one model and one parallel request.
 An existing external Ollama server is never reconfigured or forcibly unloaded.
 
@@ -85,9 +87,9 @@ not cap unrelated programs, external Ollama, GPU memory, file-backed mappings, o
 Docker/WSL VM as a whole; they cannot guarantee that other programs leave RAM free.
 
 While running, memory pressure holds new inference/tool calls and freezes agent lifetime
-clocks. Recovery requires another 512 MiB of headroom to avoid cycling near the threshold.
+clocks. Recovery requires another 128 MiB of headroom to avoid cycling near the threshold.
 The launcher logs the hold/recovery and the GUI shows a memory safety notice.
-Direct backend launches also use the reserve (`UTOPIA_RAM_RESERVE_MB`, default 2048),
+Direct backend launches also use the reserve (`UTOPIA_RAM_RESERVE_MB`, default 1024),
 but the Windows process cap requires the desktop launcher. Both desktop memory settings
 accept integers from 512 to 65536 MiB. Linux uses host headroom checks and Docker limits;
 the Windows Job Object cap is Windows-only.

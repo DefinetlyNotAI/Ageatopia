@@ -33,7 +33,7 @@ def default_config():
         "dashboard_port": 3000,
         "manage_ollama": True,
         "ollama_cache_ram_mb": 1024,
-        "ram_reserve_mb": 2048,
+        "ram_reserve_mb": 1024,
         "process_memory_mb": 4096,
     }
 

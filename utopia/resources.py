@@ -85,20 +85,20 @@ class MemoryGuard:
         self.reserve_mb = (
             reserve_mb
             if reserve_mb is not None
-            else int(os.environ.get("UTOPIA_RAM_RESERVE_MB", "2048"))
+            else int(os.environ.get("UTOPIA_RAM_RESERVE_MB", "1024"))
         )
         if not 512 <= self.reserve_mb <= 65536:
             raise ValueError("RAM reserve must be between 512 and 65536 MiB")
 
     def snapshot(self):
         state = host_memory()
-        state["ram_reserve_mb"] = max(self.reserve_mb, (state["total_mb"] * 15 + 99) // 100)
-        state["commit_reserve_mb"] = self.reserve_mb
+        state["ram_reserve_mb"] = self.reserve_mb
+        state["commit_reserve_mb"] = max(512, self.reserve_mb // 2)
         return state
 
     def check(self, allocation_mb=0, recovery=False):
         state = self.snapshot()
-        margin = allocation_mb + (512 if recovery else 0)
+        margin = allocation_mb + (128 if recovery else 0)
         if (
             state["available_mb"] < state["ram_reserve_mb"] + margin
             or state["commit_available_mb"] < state["commit_reserve_mb"] + margin

@@ -156,7 +156,8 @@ class Runtime:
 
     async def start(self, action):
         self.engine.config.validate_agent_context()
-        self.memory_guard.check(self.engine.config.tools.memory_mb + 512)
+        # Docker's memory limit is a ceiling, not another upfront host allocation.
+        self.memory_guard.check(64 if getattr(self.sandbox, "started", False) else 256)
         self.check_memory()
         if getattr(self.sandbox, "started", False):
             if not self.sandbox.available:

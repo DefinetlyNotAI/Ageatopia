@@ -15,15 +15,15 @@ def test_memory_guard_checks_ram_commit_and_recovery_margin(monkeypatch):
     state = {"total_mb": 16000, "available_mb": 4000, "commit_available_mb": 4000}
     monkeypatch.setattr("utopia.resources.host_memory", lambda: state.copy())
     guard = MemoryGuard(2048)
-    assert guard.check()["ram_reserve_mb"] == 2400
-    state["available_mb"] = 2399
+    assert guard.check()["ram_reserve_mb"] == 2048
+    state["available_mb"] = 2047
     with pytest.raises(MemoryPressure, match="Memory safety hold"):
         guard.check()
-    state["available_mb"] = 2500
+    state["available_mb"] = 2100
     with pytest.raises(MemoryPressure):
         guard.check(recovery=True)
     state["available_mb"] = 4000
-    state["commit_available_mb"] = 2047
+    state["commit_available_mb"] = 1023
     with pytest.raises(MemoryPressure):
         guard.check()
     state["commit_available_mb"] = 4000
@@ -34,7 +34,7 @@ def test_memory_guard_checks_ram_commit_and_recovery_margin(monkeypatch):
 async def test_memory_hold_preserves_agent_lifetimes_and_recovers(engine, monkeypatch):
     inference = SharedInference()
     runtime = Runtime(engine, inference)
-    state = {"total_mb": 16000, "available_mb": 2000, "commit_available_mb": 4000}
+    state = {"total_mb": 16000, "available_mb": 500, "commit_available_mb": 4000}
     monkeypatch.setattr("utopia.resources.host_memory", lambda: state.copy())
     before = engine.state["sim_ms"]
     balances = [agent["lifetime_ms"] for agent in engine.state["agents"].values()]
@@ -110,6 +110,7 @@ async def test_cold_model_budget_blocks_loading_but_resident_context_can_continu
     await provider.client.aclose()
     provider.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     settings = ModelSettings()
+    settings.gpu_layers = 0
     provider.model_sizes[(settings.base_url, settings.model)] = 4096
     try:
         with pytest.raises(MemoryPressure) as failure:
@@ -117,6 +118,10 @@ async def test_cold_model_budget_blocks_loading_but_resident_context_can_continu
         assert failure.value.allocation_mb == 6144
         assert provider.memory_needed_mb == 6144
         assert requests == ["/api/ps"]
+        settings.gpu_layers = None
+        state.update(available_mb=3230, commit_available_mb=1137)
+        await provider.check_model_memory(settings)
+        assert provider.memory_needed_mb == 0
         models.append({"name": settings.model, "context_length": settings.context_tokens})
         await provider.check_model_memory(settings)
         assert provider.memory_needed_mb == 0
