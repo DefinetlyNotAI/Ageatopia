@@ -315,7 +315,10 @@ and Qwen3.5's function/parameter format, and grades only an explicit
 `task` submit call, preserves malformed raw outputs, and executes no generated
 tools. Ordinary assistant text can accompany the call, matching the simulation
 runtime. Multiple calls and invalid submission arguments are rejected. It does not
-replace full simulation validation.
+rely on model-config stopping defaults: generation explicitly uses the tokenizer's
+end token and records the end/padding token IDs in the report. This prevents the
+Qwen3.5 checkpoint's padding-token default from continuing into invented dialogue.
+This check does not replace full simulation validation.
 `GET /comparison` compares model/context outcomes across runs. For real provider
 benchmarks, run `python -m utopia.benchmark --models qwen3.5:2b qwen3.5:0.8b`.
 

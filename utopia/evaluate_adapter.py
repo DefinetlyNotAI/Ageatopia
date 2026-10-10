@@ -13,6 +13,19 @@ from utopia.tasks import generate_tasks, public_task
 from utopia.tools import TOOLS
 
 
+def generation_options(tokenizer, max_output_tokens):
+    if tokenizer.eos_token_id is None:
+        raise ValueError("Evaluation requires a tokenizer end token")
+    return {
+        "do_sample": False,
+        "max_new_tokens": max_output_tokens,
+        "eos_token_id": tokenizer.eos_token_id,
+        "pad_token_id": (
+            tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+        ),
+    }
+
+
 def submission_answer(output):
     match = re.search(r"<tool_call>\s*(.*?)\s*</tool_call>", output, re.DOTALL)
     if not match or output.count("<tool_call>") != 1 or output.count("</tool_call>") != 1:
@@ -115,6 +128,7 @@ def evaluate(args):
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
+    decoding = generation_options(tokenizer, args.max_output_tokens)
     if args.mode == "submissions" and "<tool_call>" not in tokenizer.get_chat_template(tools=TOOLS):
         raise ValueError("Submission evaluation requires a chat template using tool_call tags")
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -168,12 +182,7 @@ def evaluate(args):
         )
         inputs = tokenizer(text, return_tensors="pt").to(device)
         with torch.inference_mode():
-            tokens = model.generate(
-                **inputs,
-                do_sample=False,
-                max_new_tokens=args.max_output_tokens,
-                pad_token_id=tokenizer.eos_token_id,
-            )
+            tokens = model.generate(**inputs, **decoding)
         output = tokenizer.decode(
             tokens[0, inputs["input_ids"].shape[1] :], skip_special_tokens=True
         ).strip()
@@ -224,7 +233,7 @@ def evaluate(args):
             if args.mode == "submissions"
             else "held-out math answers; no tools, cyber tasks or full simulation"
         ),
-        "decoding": {"do_sample": False, "max_output_tokens": args.max_output_tokens},
+        "decoding": decoding,
         "device": device,
         "evaluation_seconds": round(time.perf_counter() - started, 3),
         "base_correct": sum(row["grade"] == GradeKind.CORRECT for row in baseline),

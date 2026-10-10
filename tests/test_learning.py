@@ -7,11 +7,29 @@ from sqlalchemy import delete, inspect
 from sqlalchemy.exc import IntegrityError
 
 from utopia.engine import Engine
-from utopia.evaluate_adapter import evaluation_tasks, submission_answer
+from utopia.evaluate_adapter import evaluation_tasks, generation_options, submission_answer
 from utopia.runtime import Runtime
 from utopia.store import Store, events
 from utopia.tools import ToolExecutor
 from utopia.train import train, verified_sample, verified_submission_index
+
+
+def test_evaluation_stops_at_tokenizer_turn_end_instead_of_model_padding_token():
+    options = generation_options(SimpleNamespace(eos_token_id=248046, pad_token_id=248044), 256)
+    assert options == {
+        "do_sample": False,
+        "max_new_tokens": 256,
+        "eos_token_id": 248046,
+        "pad_token_id": 248044,
+    }
+    assert (
+        generation_options(SimpleNamespace(eos_token_id=151645, pad_token_id=None), 128)[
+            "pad_token_id"
+        ]
+        == 151645
+    )
+    with pytest.raises(ValueError, match="end token"):
+        generation_options(SimpleNamespace(eos_token_id=None, pad_token_id=None), 128)
 
 
 def test_submission_evaluation_accepts_only_one_explicit_submit_call():

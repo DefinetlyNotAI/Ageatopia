@@ -649,3 +649,25 @@ The unchanged report is held-out-submissions-qwen3.5-nf4-fp16emb-1.json under
 Final verification passed 110 standard tests with three integrations deselected,
 plus Ruff lint and formatting. The trained adapter remains inactive because neither
 this check nor the earlier deployed-model benchmark demonstrated a live benefit.
+
+## Evaluation turn-boundary correction
+
+An actual configuration diagnostic found that Qwen3.5's config-derived generation
+end token was 248044 (endoftext, also its padding token), while the tokenizer's
+assistant-turn end token is 248046 (im_end). The pinned official repository has no
+generation_config.json, confirmed through its file listing and a 404 retrieval.
+The evaluator now explicitly passes tokenizer end/padding token IDs and records
+them in the report. A regression covers the differing tokens, missing padding and
+missing end token; static review found no actionable issue.
+
+With only this stopping correction, the same twelve-task seed and adapter were
+reevaluated in held-out-submissions-qwen3.5-nf4-fp16emb-1-turn-stop.json. Runtime
+fell from 388.505 to 69.445 seconds. Invented tool-response continuations disappeared;
+all outputs ended after a single request call. Base and adapter remained identical
+and scored 0/12. The original report is preserved but its generated continuations
+cannot be attributed solely to model behavior: the evaluator allowed generation
+past the actual assistant-turn boundary. This corrected check still supplies no
+assignment exchange, unlike the verified training contexts; it therefore does not
+isolate ability to solve an assigned task. The adapter remains inactive.
+
+Eighteen focused learning tests passed, along with Ruff lint and formatting.
