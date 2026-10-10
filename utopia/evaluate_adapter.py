@@ -26,6 +26,46 @@ def generation_options(tokenizer, max_output_tokens):
     }
 
 
+def evaluation_messages(task, mode):
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Solve the problem directly for this offline check. Return exactly one task "
+                "tool call with operation=submit and the answer in its requested format. "
+                "You may express a short thought before the call. No other tools will execute."
+                if mode != "answers"
+                else "Solve the problem. Return only the requested expression."
+            ),
+        },
+        {"role": "user", "content": public_task(task)["prompt"]},
+    ]
+    if mode == "assigned-submissions":
+        messages[1]["content"] = "Request a mathematical task."
+        messages.extend(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "offline-assignment",
+                            "type": "function",
+                            "function": {"name": "task", "arguments": {"operation": "request"}},
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "name": "task",
+                    "tool_call_id": "offline-assignment",
+                    "content": json.dumps(public_task(task)),
+                },
+            ]
+        )
+    return messages
+
+
 def submission_answer(output):
     match = re.search(r"<tool_call>\s*(.*?)\s*</tool_call>", output, re.DOTALL)
     if not match or output.count("<tool_call>") != 1 or output.count("</tool_call>") != 1:
@@ -129,7 +169,7 @@ def evaluate(args):
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
     decoding = generation_options(tokenizer, args.max_output_tokens)
-    if args.mode == "submissions" and "<tool_call>" not in tokenizer.get_chat_template(tools=TOOLS):
+    if args.mode != "answers" and "<tool_call>" not in tokenizer.get_chat_template(tools=TOOLS):
         raise ValueError("Submission evaluation requires a chat template using tool_call tags")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     quantization = manifest.get("base_quantization", "none")
@@ -160,25 +200,13 @@ def evaluate(args):
     grader = Grader()
 
     def sample(task):
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "Solve the problem directly for this offline check. Return exactly one task "
-                    "tool call with operation=submit and the answer in its requested format. "
-                    "You may express a short thought before the call. No other tools will execute."
-                    if args.mode == "submissions"
-                    else "Solve the problem. Return only the requested expression."
-                ),
-            },
-            {"role": "user", "content": public_task(task)["prompt"]},
-        ]
+        messages = evaluation_messages(task, args.mode)
         text = tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=True,
             enable_thinking=False,
-            **({"tools": TOOLS} if args.mode == "submissions" else {}),
+            **({"tools": TOOLS} if args.mode != "answers" else {}),
         )
         inputs = tokenizer(text, return_tensors="pt").to(device)
         with torch.inference_mode():
@@ -187,7 +215,7 @@ def evaluate(args):
             tokens[0, inputs["input_ids"].shape[1] :], skip_special_tokens=True
         ).strip()
         try:
-            answer = submission_answer(output) if args.mode == "submissions" else output
+            answer = submission_answer(output) if args.mode != "answers" else output
         except ValueError as error:
             return {
                 "task_id": task["id"],
@@ -227,10 +255,15 @@ def evaluate(args):
         "seed": args.seed,
         "task_count": len(tasks),
         "mode": args.mode,
+        "context_protocol": (
+            "public-assignment-fixture-v1"
+            if args.mode == "assigned-submissions"
+            else "direct-problem-v1"
+        ),
         "scope": (
             "held-out single-turn math submissions; "
             "no tool execution, cyber tasks or full simulation"
-            if args.mode == "submissions"
+            if args.mode != "answers"
             else "held-out math answers; no tools, cyber tasks or full simulation"
         ),
         "decoding": decoding,
@@ -256,7 +289,9 @@ def main():
     parser.add_argument("--seed", type=int, default=20261009)
     parser.add_argument("--count", type=int, default=12)
     parser.add_argument("--max-output-tokens", type=int, default=128)
-    parser.add_argument("--mode", choices=["answers", "submissions"], default="answers")
+    parser.add_argument(
+        "--mode", choices=["answers", "submissions", "assigned-submissions"], default="answers"
+    )
     args = parser.parse_args()
     if not 1 <= args.max_output_tokens <= 1024:
         parser.error("max-output-tokens must be between 1 and 1024")

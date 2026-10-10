@@ -671,3 +671,26 @@ assignment exchange, unlike the verified training contexts; it therefore does no
 isolate ability to solve an assigned task. The adapter remains inactive.
 
 Eighteen focused learning tests passed, along with Ruff lint and formatting.
+
+## Public assignment evaluation context
+
+A separate assigned-submissions mode now supplies the public request/response
+assignment exchange before generation, matching the shape of real task-tool
+assignment results and training histories. Both direct-problem modes remain
+available. Reports explicitly identify public-assignment-fixture-v1, so this
+constructed context cannot be mistaken for live tool execution. The response uses
+public_task exclusively; a regression guards private-answer/validator exclusion
+and matching tool call IDs. Nineteen focused learning tests passed, and static
+review found no actionable validity, privacy or compatibility issue.
+
+The paired assignment check completed in 122.315 seconds on seed 20261009,
+preserved as held-out-assigned-submissions-qwen3.5-nf4-fp16emb-1.json. Both models
+attempted submissions instead of requesting work, but scored 0/12: five incorrect
+and seven malformed results each. All twelve decoded outputs remained identical.
+Several malformed answers used unsupported mathematical syntax; others omitted
+the answer or repeated incomplete calls. This demonstrates the assignment context
+changes tool behavior, but provides no adapter improvement evidence. It does not
+prove full simulation effectiveness, and the adapter remains inactive.
+
+Final standard verification passed 112 tests with three integrations deselected;
+Ruff lint/format and diff checks also passed.

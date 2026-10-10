@@ -7,11 +7,38 @@ from sqlalchemy import delete, inspect
 from sqlalchemy.exc import IntegrityError
 
 from utopia.engine import Engine
-from utopia.evaluate_adapter import evaluation_tasks, generation_options, submission_answer
+from utopia.evaluate_adapter import (
+    evaluation_messages,
+    evaluation_tasks,
+    generation_options,
+    submission_answer,
+)
 from utopia.runtime import Runtime
 from utopia.store import Store, events
 from utopia.tools import ToolExecutor
 from utopia.train import train, verified_sample, verified_submission_index
+
+
+def test_assigned_submission_context_contains_only_public_assignment():
+    task = {
+        "id": "task-held-out",
+        "category": "mathematics",
+        "prompt": "Calculate 3 + 4.",
+        "reward_multiplier": 1,
+        "answer": "PRIVATE-ANSWER-CANARY",
+        "validator": {"secret": "PRIVATE-VALIDATOR-CANARY"},
+    }
+    messages = evaluation_messages(task, "assigned-submissions")
+    assert [message["role"] for message in messages] == ["system", "user", "assistant", "tool"]
+    call = messages[2]["tool_calls"][0]
+    assert call["function"] == {"name": "task", "arguments": {"operation": "request"}}
+    assert messages[3]["tool_call_id"] == call["id"]
+    visible = json.loads(messages[3]["content"])
+    assert set(visible) == {"id", "category", "prompt", "reward_multiplier"}
+    assert visible["id"] == task["id"] and "Calculate 3 + 4." in visible["prompt"]
+    assert "PRIVATE-" not in json.dumps(messages)
+    assert len(evaluation_messages(task, "submissions")) == 2
+    assert len(evaluation_messages(task, "answers")) == 2
 
 
 def test_evaluation_stops_at_tokenizer_turn_end_instead_of_model_padding_token():

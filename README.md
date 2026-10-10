@@ -319,6 +319,15 @@ rely on model-config stopping defaults: generation explicitly uses the tokenizer
 end token and records the end/padding token IDs in the report. This prevents the
 Qwen3.5 checkpoint's padding-token default from continuing into invented dialogue.
 This check does not replace full simulation validation.
+
+Use `--mode assigned-submissions` for a separate check after a public assignment
+exchange. It supplies a fixed request call and a response containing only
+`public_task` fields, matching the assignment format used during simulation.
+The report labels this context `public-assignment-fixture-v1`; the exchange is an
+offline fixture, and no generated tools execute. Private answers and validators
+remain exclusively in the grader. Keep this report separate from direct-problem
+checks and full simulation benchmarks.
+
 `GET /comparison` compares model/context outcomes across runs. For real provider
 benchmarks, run `python -m utopia.benchmark --models qwen3.5:2b qwen3.5:0.8b`.
 
