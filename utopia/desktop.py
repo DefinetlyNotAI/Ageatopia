@@ -98,6 +98,7 @@ class ProcessSupervisor:
         self.logger = setup_logging(self.data_dir, "desktop")
         self.processes = {}
         self.external_ollama = False
+        self.progress = None
 
     @staticmethod
     def _assert_port_available(port):
@@ -112,6 +113,8 @@ class ProcessSupervisor:
     def _spawn(self, name, command, cwd, env):
         port = 11434 if name == "ollama" else self.config[f"{name}_port"]
         self._assert_port_available(port)
+        if self.progress:
+            self.progress(f"Starting {name} on port {port}...")
         log_file = open(self.data_dir / "logs" / f"{name}.log", "ab", buffering=0)
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
@@ -129,6 +132,8 @@ class ProcessSupervisor:
             raise
         self.processes[name] = (process, log_file)
         self.logger.info(json.dumps({"action": "started", "service": name, "pid": process.pid}))
+        if self.progress:
+            self.progress(f"Started {name} (PID {process.pid})")
         return process
 
     def start_ollama(self):
@@ -142,6 +147,8 @@ class ProcessSupervisor:
         else:
             self.external_ollama = True
             self.logger.info("Existing Ollama server retained; its cache settings are unchanged")
+            if self.progress:
+                self.progress("Connected to existing Ollama server")
             return
         executable = shutil_which("ollama")
         if not executable:
@@ -167,6 +174,7 @@ class ProcessSupervisor:
         raise TimeoutError("Ollama did not become ready within 30 seconds")
 
     def start_services(self, progress=None):
+        self.progress = progress
         if all(
             name in self.processes and self.processes[name][0].poll() is None
             for name in ("backend", "dashboard")
@@ -249,6 +257,8 @@ class ProcessSupervisor:
             if not entry:
                 continue
             process, log_file = entry
+            if self.progress:
+                self.progress(f"Stopping {name}...")
             if process.poll() is None:
                 try:
                     if name == "ollama":
@@ -298,6 +308,8 @@ class ProcessSupervisor:
                     process.wait(timeout=5)
             log_file.close()
             self.logger.info(json.dumps({"action": "stopped", "service": name}))
+            if self.progress:
+                self.progress(f"Stopped {name}")
 
     def status(self):
         statuses = {
@@ -369,10 +381,23 @@ def native_command(url, data_dir):
     return [str(executable), "--url", url, "--data-dir", str(data_dir)]
 
 
-def open_window(url, data_dir):
+def open_window(url, data_dir, supervisor=None):
     with subprocess.Popen(native_command(url, data_dir), cwd=ROOT) as process:
         try:
-            result = process.wait()
+            while True:
+                try:
+                    result = process.wait(timeout=1)
+                    break
+                except subprocess.TimeoutExpired:
+                    if supervisor:
+                        for name in ("backend", "dashboard", "ollama"):
+                            entry = supervisor.processes.get(name)
+                            if entry and entry[0].poll() is not None:
+                                raise RuntimeError(
+                                    f"{name.title()} stopped unexpectedly "
+                                    f"(exit code {entry[0].returncode}). "
+                                    f"See {supervisor.data_dir / 'logs' / f'{name}.log'}"
+                                ) from None
             if result:
                 raise RuntimeError(f"Native desktop host exited with code {result}")
         finally:
@@ -397,11 +422,15 @@ def main():
     try:
         from rich.console import Console
 
-        console = Console()
+        console = Console(log_path=False)
         with console.status("Waiting for local services...", spinner="dots"):
-            supervisor.start_services(progress=lambda message: console.print(message, style="cyan"))
+            supervisor.start_services(
+                progress=lambda message: console.log(message, style="cyan", markup=False)
+            )
         console.print("[3/3] Opening desktop window", style="green")
-        open_window(f"http://127.0.0.1:{config['dashboard_port']}", config["data_dir"])
+        console.log("Desktop ready. Service output is saved in", str(supervisor.data_dir / "logs"))
+        open_window(f"http://127.0.0.1:{config['dashboard_port']}", config["data_dir"], supervisor)
+        console.log("Desktop window closed; shutting down local services", style="cyan")
     except (OSError, RuntimeError, TimeoutError) as error:
         from rich.console import Console
 
