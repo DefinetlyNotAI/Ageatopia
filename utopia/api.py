@@ -212,11 +212,13 @@ def create_app(directory=None, store=None, token=None):
     @app.get("/runs/{run_id}", dependencies=protected)
     async def get_run(run_id: str):
         engine = lookup(run_id)
-        return {
-            **engine.summary(),
-            "config": engine.state["config"],
-            "model_manifest": engine.state["model_manifest"],
-        }
+        with engine.lock:
+            return {
+                **engine.summary(),
+                "event_cursor": database.latest_sequence(run_id),
+                "config": engine.state["config"],
+                "model_manifest": engine.state["model_manifest"],
+            }
 
     @app.get("/runs/{run_id}/agents/{identity}", dependencies=protected)
     async def get_agent(run_id: str, identity: str):
@@ -348,6 +350,8 @@ def create_app(directory=None, store=None, token=None):
         kind: str | None = None,
         task_id: str | None = None,
         severity: str | None = None,
+        recent: bool = False,
+        operator: bool = False,
     ):
         lookup(run_id)
         return database.event_page(
@@ -357,6 +361,9 @@ def create_app(directory=None, store=None, token=None):
             kind=kind,
             task_id=task_id,
             severity=severity,
+            recent=recent,
+            operator=operator,
+            limit=200 if recent else 1000,
         )
 
     @app.get("/runs/{run_id}/stream", dependencies=protected)

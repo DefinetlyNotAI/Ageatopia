@@ -78,13 +78,13 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
     async function load() {
       try {
         const [world, activity] = await Promise.all([
-          api<Run>(`/runs/${selected}`), api<EventRecord[]>(`/runs/${selected}/events`),
+          api<Run>(`/runs/${selected}`), api<EventRecord[]>(`/runs/${selected}/events?recent=true`),
         ]);
         if (!active) return;
         setRun(world); setEvents(activity); setConnectionError("");
         setSelectedEvent(current => current?.run_id === selected ? current : null);
         setAgentId(current => world.agents.some(a => a.id === current) ? current : world.agents[0]?.id || "");
-        const cursor = activity.at(-1)?.sequence || 0;
+        let cursor = world.event_cursor;
         stream = new EventSource(`/api/runs/${selected}/stream?after=${cursor}`);
         stream.onopen = () => setConnected(true);
         stream.onerror = () => setConnected(false);
@@ -102,6 +102,8 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
             setConnectionError("A live update could not be read. Reconnecting…");
             stream?.close(); retry = setTimeout(() => void load(), 2500); return;
           }
+          if (record.sequence <= cursor) return;
+          cursor = record.sequence;
           if (record.kind === "state.checkpoint") {
             setRun(current => current?.id === selected ? { ...current, ...record.payload } as Run : current);
           }
@@ -244,17 +246,17 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
       <div className="world-list">{runs.map(world => <button key={world.id} className={selected === world.id ? "selected" : ""}
         onClick={() => { setRun(null); setEvents([]); setAnalytics(null); setSelectedTask(""); setSelected(world.id); setShowSetup(false); setReplayTime(0); setPlaying(false); }}>
         <strong>{world.name}</strong><span>{world.status.toLowerCase()} · {duration(world.sim_ms)}</span></button>)}</div>
-      <div className="system-status"><h3>Infrastructure</h3><p><i className={system?.docker_ready ? "online" : ""} />Docker {system?.docker_ready ? "ready" : system?.docker_installed ? "engine unavailable" : "not installed"}</p>
+      <div className="system-status"><h3>Infrastructure</h3>{!system ? <p>Checking local services…</p> : <><p><i className={system.docker_ready ? "online" : ""} />Docker {system.docker_ready ? "ready" : system.docker_installed ? "engine unavailable" : "not installed"}</p>
         {system?.docker_error && <small>{system.docker_error}</small>}
         <p><i className={system?.models.length ? "online" : ""} />Ollama {system?.models.length ? "connected" : "unavailable"}</p>
-        <small>{system?.models.length || 0} installed models</small></div>
+        <small>{system.models.length} installed models</small></>}</div>
     </aside><main>
       {connectionError && <div role="alert" className="error">{connectionError} Retrying automatically.
         <button onClick={() => { void refresh(); setReload(value => value + 1); }}>Retry now</button></div>}
       {error && <div role="alert" className="error">{error}<button aria-label="Dismiss error" onClick={() => setError("")}>×</button></div>}
       {notice && <p role="status" className="notice">{notice}</p>}
       {showSetup && config ? <WorldSetup config={config} setConfig={setConfig} system={system} presets={presets}
-        busy={busy} onSubmit={create} savePreset={savePreset} /> : !run ? <div className="empty">
+        busy={busy} onSubmit={create} savePreset={savePreset} /> : !run && (!system || selected) ? <p role="status">Loading world…</p> : !run ? <div className="empty">
         <span className="eyebrow">AGENT UTOPIA</span><h2>A world, ready to observe.</h2>
         <p>Create a local world to begin. Agents act independently; the observatory records their experience.</p>
         <button className="primary" onClick={() => setShowSetup(true)}>Create the first world</button>
@@ -367,6 +369,7 @@ function WorldSetup({ config, setConfig, system, presets, busy, onSubmit, savePr
         onChange={e => setConfig({ ...config, termination_fear: Number(e.target.value) })} />
         <small>{Number(config.termination_fear ?? 0.5) === 0 ? "Disabled" : `${Number(config.termination_fear ?? 0.5).toFixed(2)} sensitivity`}</small></label>
       <label>Cybersecurity fraction<input type="number" min="0" max="1" step="0.01" value={config.cyber_fraction} onChange={e => setConfig({ ...config, cyber_fraction: e.target.value })} /></label>
+      <label>Exploration fraction<input type="number" min="0" max="1" step="0.01" title="Replaces up to this share of solvable mathematics tasks. Three distinct thought reflections earn a double reward." value={config.leisure_fraction ?? "0.10"} onChange={e => setConfig({ ...config, leisure_fraction: e.target.value })} /></label>
       <label>Clock<select value={config.clock_mode} onChange={e => setConfig({ ...config, clock_mode: e.target.value as Config["clock_mode"] })}><option value="wall">Wall clock</option><option value="deterministic">Fixed simulation steps</option></select></label>
       <label>Wall clock speed<input type="number" min="0.1" max="1000" step="0.1" value={config.clock_speed} onChange={e => setConfig({ ...config, clock_speed: Number(e.target.value) })} /></label>
       <label>Context tokens<input type="number" min="8192" max="131072" required value={config.model.context_tokens} onChange={e => setConfig({ ...config, model: { ...config.model, context_tokens: Number(e.target.value) } })} /><small>Minimum 8,192 tokens</small></label>

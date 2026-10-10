@@ -159,9 +159,24 @@ class Store:
             return list(reversed(records)), count
 
     def event_page(
-        self, run_id, after=0, limit=1000, agent_id=None, kind=None, task_id=None, severity=None
+        self,
+        run_id,
+        after=0,
+        limit=1000,
+        agent_id=None,
+        kind=None,
+        task_id=None,
+        severity=None,
+        recent=False,
+        operator=False,
     ):
         query = select(events).where(events.c.run_id == run_id, events.c.sequence > after)
+        if operator:
+            query = query.where(
+                events.c.severity.in_(["warning", "error"])
+                | events.c.kind.like("run.%")
+                | events.c.kind.like("runtime.%")
+            )
         for column, value in (
             (events.c.agent_id, agent_id),
             (events.c.kind, kind),
@@ -170,12 +185,24 @@ class Store:
         ):
             if value:
                 query = query.where(column == value)
-        query = query.order_by(events.c.sequence).limit(limit)
+        query = query.order_by(events.c.sequence.desc() if recent else events.c.sequence).limit(
+            limit
+        )
         with self.engine.connect() as connection:
-            return [
+            records = [
                 dict(row, payload=json.loads(row["payload"]))
                 for row in connection.execute(query).mappings()
             ]
+            return list(reversed(records)) if recent else records
+
+    def latest_sequence(self, run_id):
+        with self.engine.connect() as connection:
+            return (
+                connection.scalar(
+                    select(func.max(events.c.sequence)).where(events.c.run_id == run_id)
+                )
+                or 0
+            )
 
     def put_preset(self, name, config):
         with self.engine.begin() as connection:

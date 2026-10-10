@@ -12,6 +12,31 @@ from utopia.api import create_app
 HEADERS = {"Authorization": "Bearer test-operator"}
 
 
+def test_live_snapshot_cursor_skips_historical_checkpoints_and_activity_is_recent(tmp_path):
+    from utopia.config import WorldConfig
+    from utopia.engine import Engine
+    from utopia.store import Store
+
+    store = Store.local(tmp_path)
+    world = Engine.create(store, WorldConfig())
+    for index in range(210):
+        world.record("test.observation", {"index": index})
+    with TestClient(create_app(tmp_path, store=store, token="test-operator")) as client:
+        snapshot = client.get(f"/runs/{world.state['id']}", headers=HEADERS).json()
+        recent = client.get(f"/runs/{world.state['id']}/events?recent=true", headers=HEADERS).json()
+        assert len(recent) == 200
+        assert recent[-1]["sequence"] == snapshot["event_cursor"]
+        assert recent[0]["sequence"] > store.event_page(world.state["id"])[0]["sequence"]
+        assert store.event_page(world.state["id"], after=snapshot["event_cursor"]) == []
+        world.record("tool.invoked", {"name": "workspace"})
+        world.record("environment.error", {"error": "Memory pressure"}, severity="warning")
+        operator_events = client.get(
+            f"/runs/{world.state['id']}/events?operator=true", headers=HEADERS
+        ).json()
+        assert any(record["kind"] == "environment.error" for record in operator_events)
+        assert not any(record["kind"] == "tool.invoked" for record in operator_events)
+
+
 @pytest.mark.parametrize("target", ["default", "override", "profile"])
 def test_world_and_preset_reject_small_agent_context(tmp_path, target):
     with TestClient(create_app(tmp_path, token="test-operator")) as client:
