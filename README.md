@@ -75,6 +75,12 @@ and checked against the startup budgets. If the required model set cannot stay l
 startup fails. Low host free-memory percentages never freeze work or lifetime clocks.
 There is no round-robin scheduling added here.
 
+`inference_concurrency` applies to local Ollama as well as remote providers.
+Use per-agent model overrides to run different resident models concurrently;
+the complete configured model set must pass startup residency checks. Ollama's
+own per-model parallelism limits still apply (Qwen 3.5 is limited to one request
+per model in Ollama 0.40.3).
+
 The Job Object is a commit ceiling, not an exclusive physical RAM reservation.
 Ollama allocates model/context RAM and VRAM; its API does not offer a transferable
 pool reserving every unused byte for future allocations. Startup budgets and resident

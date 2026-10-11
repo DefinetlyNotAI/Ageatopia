@@ -170,6 +170,23 @@ def test_start_without_docker_fails_closed_and_does_not_terminate(tmp_path, monk
         assert all(a["state"] != "TERMINATED" for a in state["agents"])
 
 
+def test_local_models_use_configured_inference_concurrency(tmp_path, monkeypatch):
+    from backend.runtime import Runtime
+
+    observed = []
+
+    async def start(runtime, action):
+        observed.append(runtime.inference.semaphore._value)
+        runtime.engine.control(action)
+
+    monkeypatch.setattr(Runtime, "start", start)
+    with TestClient(create_app(tmp_path, token="test-operator")) as client:
+        world = client.post("/runs", headers=HEADERS, json={"inference_concurrency": 2}).json()
+        response = client.post(f"/runs/{world['id']}/control/start", headers=HEADERS)
+        assert response.status_code == 200
+        assert observed == [2]
+
+
 def test_world_delete_permanently_erases_records_and_owned_files_after_restart(
     tmp_path, monkeypatch
 ):

@@ -11,7 +11,6 @@ import subprocess
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlparse
 
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
@@ -340,15 +339,7 @@ def create_app(directory=None, store=None, token=None):
             if action in {"start", "resume"}:
                 if any(e.state["status"] == "RUNNING" for e in engines.values()):
                     raise ValueError("Pause the active run before starting another")
-                local_ollama = any(
-                    agent["model"]["provider"] == "ollama"
-                    and urlparse(agent["model"]["base_url"]).hostname
-                    in {"localhost", "127.0.0.1", "::1"}
-                    for agent in engine.state["agents"].values()
-                )
-                inference.semaphore = asyncio.Semaphore(
-                    1 if local_ollama else engine.config.inference_concurrency
-                )
+                inference.semaphore = asyncio.Semaphore(engine.config.inference_concurrency)
                 runtime = runtimes.setdefault(run_id, Runtime(engine, inference))
                 try:
                     await runtime.start(action)
