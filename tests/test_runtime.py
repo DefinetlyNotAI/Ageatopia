@@ -156,6 +156,7 @@ async def test_workspace_missing_value_explains_python_argument_without_executin
     )
     assert "value" in result["error"] and "Python code" in result["error"]
     assert "text" in result["error"] and "write" in result["error"]
+    assert result["retry_with"] == {"operation": "python", "value": "print(1/4)"}
     assert not engine.store.event_page(engine.state["id"], kind="process.executed")
 
 
@@ -248,6 +249,49 @@ async def test_empty_model_response_is_retryable_and_does_not_enter_history(engi
     assert engine.agent(identity)["history"] == history
     assert engine.agent(identity)["retry_after_ms"] - engine.state["sim_ms"] == 2000
     assert provider.active == 0 and provider.semaphore._value == 1
+
+
+@pytest.mark.parametrize("retry_content", ["Ready", ""])
+async def test_output_exhaustion_retries_once_with_concise_tool_guidance(engine, retry_content):
+    from unittest.mock import AsyncMock
+
+    identity = next(iter(engine.state["agents"]))
+    runtime, _ = runtime_with(engine, [])
+    runtime.infer = AsyncMock(
+        side_effect=[
+            InferenceResult({"role": "assistant", "content": ""}, 512, 100, 1),
+            InferenceResult({"role": "assistant", "content": retry_content}, 512, 100, 1),
+        ]
+    )
+    await runtime.agent_loop(identity)
+    assert runtime.infer.await_count == 2
+    assert "one concise tool call" in runtime.infer.await_args.args[1][-1]["content"]
+    assert bool(engine.store.event_page(engine.state["id"], kind="inference.error")) == (
+        not retry_content
+    )
+    assert all(message.get("content") != "" for message in engine.agent(identity)["history"])
+
+
+def test_transcript_archives_require_explicit_retrieval(engine):
+    identity = next(iter(engine.state["agents"]))
+    agent = engine.agent(identity)
+    agent["memory"] = ["Useful algebra lesson", "[Context archive abc-1, part 1/1; JSON]\nalgebra"]
+    assert engine.recall(identity, "algebra") == ["Useful algebra lesson"]
+    assert agent["memory"][1] in engine.recall(identity, "context archive abc-1")
+
+
+async def test_default_notebook_read_excludes_archives_but_explicit_offset_preserves_them(engine):
+    identity = next(iter(engine.state["agents"]))
+    archive = "[Context archive abc-1, part 1/1; JSON]\ntranscript"
+    engine.agent(identity)["memory"] = ["Working lesson", archive]
+    executor = ToolExecutor(engine, FakeSandbox())
+    assert (await executor.execute(identity, "memory", {"operation": "read"}))["notes"] == [
+        "Working lesson"
+    ]
+    assert (
+        archive
+        in (await executor.execute(identity, "memory", {"operation": "read", "offset": 0}))["notes"]
+    )
 
 
 async def test_text_only_reply_continues_when_tasks_remain(engine):

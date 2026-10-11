@@ -681,6 +681,8 @@ class Engine:
                 ]
             )
         )
+        if "context archive" not in query.lower():
+            entries = [text for text in entries if not text.startswith("[Context archive ")]
         words = set(re.findall(r"\w+", query.lower()))
         ranked = sorted(
             enumerate(entries),

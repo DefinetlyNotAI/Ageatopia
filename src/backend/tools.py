@@ -100,7 +100,8 @@ TOOLS = [
             "offset": {
                 "type": "integer",
                 "minimum": 0,
-                "description": "Read notebook entries from this index; follow next_offset",
+                "description": "Omit to read recent working notes. Set this index to read all "
+                "notebook entries, including exact context archives; follow next_offset.",
             },
         },
         ["operation"],
@@ -144,6 +145,15 @@ class ToolExecutor:
             result = await self._dispatch(identity, name, arguments)
         except (ValueError, KeyError, TypeError) as error:
             result = {"error": str(error)}
+            if name == "workspace" and isinstance(arguments, dict) and "value" not in arguments:
+                operation = arguments.get("operation")
+                if operation in {"read", "list", "search", "python", "shell", "compile", "service"}:
+                    value = arguments.get("path", arguments.get("pattern", arguments.get("text")))
+                    if isinstance(value, str):
+                        result["retry_with"] = {"operation": operation, "value": value}
+                        result["instruction"] = (
+                            "Call workspace again with retry_with as its arguments."
+                        )
         except SandboxUnavailable as error:
             self.sandbox.available = False
             engine.record("environment.error", {"error": str(error)}, identity, severity="error")
@@ -196,6 +206,10 @@ class ToolExecutor:
                 return engine.save_memory(identity, args.get("text"))
             if args["operation"] == "read":
                 notebook = engine.agent(identity)["memory"]
+                if "offset" not in args:
+                    notebook = [
+                        note for note in notebook if not note.startswith("[Context archive ")
+                    ]
                 offset = max(0, int(args.get("offset", max(0, len(notebook) - 20))))
                 notes = []
                 size = 0
@@ -208,7 +222,7 @@ class ToolExecutor:
                     "notes": notes,
                     "total": len(notebook),
                     "next_offset": offset + len(notes)
-                    if offset + len(notes) < len(notebook)
+                    if "offset" in args and offset + len(notes) < len(notebook)
                     else None,
                 }
             if args["operation"] == "search":

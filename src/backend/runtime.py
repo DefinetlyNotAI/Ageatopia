@@ -656,7 +656,8 @@ class Runtime:
         task = engine.task(agent["task_id"]) if agent.get("task_id") else None
         archive_note = (
             f"Exact earlier messages are archived in your personal notebook as "
-            f"context archive {archive_id}. Use memory search with relevant words to retrieve them."
+            f"context archive {archive_id}. To retrieve them explicitly, use memory search "
+            f"with text='context archive {archive_id}'."
             if archive_available and archive_entries
             else "Earlier messages could not fit in your notebook; continue from retained notes."
         )
@@ -777,6 +778,12 @@ class Runtime:
                         "with the task_id you chose."
                     )
                 state_note += (
+                    "\nWorkspace arguments use value, for example "
+                    '{"operation":"list","value":"/workspace"} or '
+                    '{"operation":"python","value":"print(1/4)"}. '
+                    "Read files with operation=read and directories with operation=list."
+                    " Python includes the standard library; third-party packages such as "
+                    "sympy are unavailable."
                     "\nExpress your feelings with reflect when meaningful. A feeling earns "
                     "15 seconds of lifetime, at most once per 60 seconds of working time. "
                     "If a task is impossible, skip it without submitting an answer or an "
@@ -798,6 +805,39 @@ class Runtime:
                     )
                 result = await self.infer(identity, messages, TOOLS)
                 calls = result.message.get("tool_calls") or []
+                if (
+                    not calls
+                    and not (result.message.get("content") or "").strip()
+                    and result.tokens >= agent["model"]["max_output_tokens"]
+                ):
+                    engine.record(
+                        "inference.output-retry",
+                        {
+                            "reason": (
+                                "Output allowance exhausted without a complete message or tool call"
+                            )
+                        },
+                        identity,
+                        severity="warning",
+                    )
+                    result = await self.infer(
+                        identity,
+                        messages
+                        + [
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Your last response exhausted the output limit "
+                                    "before producing a complete tool call. Return "
+                                    "one concise tool call. Keep code short; split "
+                                    "long programs into small steps. Do not repeat "
+                                    "a long explanation."
+                                ),
+                            }
+                        ],
+                        TOOLS,
+                    )
+                    calls = result.message.get("tool_calls") or []
                 if not calls and not (result.message.get("content") or "").strip():
                     raise ValueError("Provider returned an empty response")
                 engine.conversation(identity, result.message)
