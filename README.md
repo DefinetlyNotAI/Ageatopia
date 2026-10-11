@@ -8,13 +8,13 @@ Agent code executes **only inside Docker**. No host shell fallback exists.
 
 ## Windows setup
 
-Install Python 3.12 or later, Node.js 22 or later, Docker Desktop with Linux
+Install Python 3.11 or later, Node.js 22 or later, Docker Desktop with Linux
 containers, and Ollama. Start Docker before starting a world. The desktop launcher
 starts local Ollama when no server is already listening.
 The default is six agents sharing Qwen3.5:2B and one inference worker.
 
 ```powershell
-python -m venv dist/python/venv
+py -3.11 -m venv dist/python/venv
 .\dist\python\venv\Scripts\Activate.ps1
 python -m pip install -r requirements.lock
 python -m pip install -e .
@@ -22,9 +22,9 @@ docker build -t agent-utopia-world:1 src/hooks/sandbox
 ollama pull qwen3.5:2b
 ```
 
-Use the installed Python version selector if it differs from `-3.12`.
+If Python 3.11 is not installed, choose any installed version 3.11 or newer.
 Use `qwen3.5:0.8b` in the world settings for a smaller model.
-The Python lock was resolved using Python 3.14 on Windows; the source supports 3.12+.
+The Python lock was resolved using Python 3.14 on Windows; the project metadata permits Python 3.11+, but the pinned lockfile has not been verified on Python 3.11.
 
 For first-time setup, run the maintenance console. Its bootstrap creates the Python
 environment; use **Install dependencies**, **Build dashboard**, **Build sandbox image**,

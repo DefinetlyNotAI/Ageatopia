@@ -15,7 +15,10 @@ $python = Join-Path $root "dist\python\venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $python)) {
     $launcher = Get-Command py -ErrorAction SilentlyContinue
     if ($launcher) {
-        & $launcher.Source -3 -m venv (Join-Path $root "dist\python\venv")
+        & $launcher.Source -3.11 -m venv (Join-Path $root "dist\python\venv")
+        if ($LASTEXITCODE -ne 0) {
+            & $launcher.Source -3 -m venv (Join-Path $root "dist\python\venv")
+        }
     } else {
         $systemPython = Get-Command python -ErrorAction Stop
         & $systemPython.Source -m venv (Join-Path $root "dist\python\venv")
@@ -23,8 +26,8 @@ if (-not (Test-Path -LiteralPath $python)) {
     if ($LASTEXITCODE -ne 0) { throw "Could not create the project virtual environment." }
 }
 
-& $python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)"
-if ($LASTEXITCODE -ne 0) { throw "Agent Utopia requires Python 3.12 or later." }
+& $python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
+if ($LASTEXITCODE -ne 0) { throw "Agent Utopia requires Python 3.11 or later." }
 
 function Install-ProjectPython {
     param([string]$Title, [string[]]$PipArguments)

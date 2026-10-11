@@ -37,7 +37,7 @@ addopts = "--basetemp=dist/cache/pytest-workspaces"
 markers = ["integration: requires real Docker and Ollama; enable with UTOPIA_INTEGRATION=1"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py311"
 line-length = 100
 cache-dir = "dist/cache/ruff"
 
