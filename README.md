@@ -31,13 +31,13 @@ environment; use **Install dependencies**, **Build dashboard**, **Build sandbox 
 **Build native host**, and **Run diagnostics** before launching the application:
 
 ```powershell
-.\src\scripts\maintain.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\src\scripts\maintain.ps1
 ```
 
 Launch the desktop application, which starts and manages its local services:
 
 ```powershell
-.\src\scripts\run.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\src\scripts\run.ps1
 ```
 
 Closing the standalone desktop window gracefully pauses simulations, persists state,
@@ -390,9 +390,9 @@ another image. Each real check removes its sandbox container and unloads the tes
 model when it finishes, including failures:
 
 ```powershell
-.\scripts\verify.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 # Run only the real checks:
-.\scripts\verify.ps1 -Suite Integration
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1 -Suite Integration
 ```
 
 See [verification evidence](docs/evidence.md) for the checked requirements and
