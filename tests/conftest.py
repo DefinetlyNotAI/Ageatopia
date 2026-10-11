@@ -1,8 +1,8 @@
 import pytest
 
-from utopia.config import WorldConfig
-from utopia.engine import Engine
-from utopia.store import Store
+from backend.config import WorldConfig
+from backend.engine import Engine
+from backend.store import Store
 
 
 @pytest.fixture(autouse=True)
@@ -10,7 +10,7 @@ def stable_host_memory(request, monkeypatch):
     if request.node.get_closest_marker("integration") or request.path.name == "test_resources.py":
         return
     monkeypatch.setattr(
-        "utopia.resources.host_memory",
+        "hooks.resources.host_memory",
         lambda: {"total_mb": 16000, "available_mb": 12000, "commit_available_mb": 16000},
     )
 

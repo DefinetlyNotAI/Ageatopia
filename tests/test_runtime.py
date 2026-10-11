@@ -5,13 +5,13 @@ import json
 import httpx
 import pytest
 
-from utopia.config import ModelSettings
-from utopia.engine import Engine
-from utopia.exports import public_trajectories
-from utopia.providers import ContextOverflow, InferenceResult, SharedInference
-from utopia.runtime import Runtime
-from utopia.sandbox import DockerSandbox, SandboxUnavailable
-from utopia.tools import TOOLS, ToolExecutor
+from backend.config import ModelSettings
+from backend.engine import Engine
+from backend.exports import public_trajectories
+from backend.runtime import Runtime
+from backend.tools import TOOLS, ToolExecutor
+from hooks.providers import ContextOverflow, InferenceResult, SharedInference
+from hooks.sandbox import DockerSandbox, SandboxUnavailable
 
 
 class FakeSandbox:
@@ -334,8 +334,8 @@ async def test_default_context_policy_summarizes_and_continues(engine):
 
 
 async def test_docker_missing_never_executes_agent_code_on_host(monkeypatch):
-    monkeypatch.setattr("utopia.sandbox.shutil.which", lambda _: None)
-    from utopia.config import ToolSettings
+    monkeypatch.setattr("hooks.sandbox.shutil.which", lambda _: None)
+    from backend.config import ToolSettings
 
     with pytest.raises(SandboxUnavailable, match="Host execution is disabled"):
         await DockerSandbox("test", ToolSettings()).execute("agent", "echo unsafe")
@@ -372,7 +372,7 @@ async def test_unknown_tools_and_malformed_calls_are_natural_errors(engine):
 
 async def test_wall_queue_transitions_settle_subtick_intervals(engine, monkeypatch):
     now = [0]
-    monkeypatch.setattr("utopia.runtime.time.perf_counter_ns", lambda: now[0])
+    monkeypatch.setattr("backend.runtime.time.perf_counter_ns", lambda: now[0])
     identity = next(iter(engine.state["agents"]))
     runtime, provider = runtime_with(engine, [{"role": "assistant", "content": "Done"}])
     await provider.semaphore.acquire()
@@ -460,13 +460,13 @@ def test_context_bound_includes_provider_thinking_and_tool_calls():
 
 
 async def test_docker_process_creation_failure_is_reported_as_unavailable(monkeypatch):
-    from utopia.config import ToolSettings
+    from backend.config import ToolSettings
 
     async def failed_start(*args, **kwargs):
         raise OSError(1455, "The paging file is too small")
 
-    monkeypatch.setattr("utopia.sandbox.shutil.which", lambda _: "docker")
-    monkeypatch.setattr("utopia.sandbox.asyncio.create_subprocess_exec", failed_start)
+    monkeypatch.setattr("hooks.sandbox.shutil.which", lambda _: "docker")
+    monkeypatch.setattr("hooks.sandbox.asyncio.create_subprocess_exec", failed_start)
     with pytest.raises(SandboxUnavailable, match="paging file") as failure:
         await DockerSandbox("resource-failure", ToolSettings())._docker("info")
     assert isinstance(failure.value.__cause__, OSError)
@@ -494,7 +494,7 @@ async def test_large_context_is_archived_and_continues_when_summarizer_fails(eng
 
 
 async def test_docker_recovery_retains_existing_container_and_volume(monkeypatch):
-    from utopia.config import ToolSettings
+    from backend.config import ToolSettings
 
     sandbox = DockerSandbox("recovery", ToolSettings())
     sandbox.started = True
@@ -520,17 +520,17 @@ async def test_resume_does_not_reserve_existing_sandbox_limit_again(engine, monk
     runtime.sandbox.started = True
     engine.control("pause")
     monkeypatch.setattr(
-        "utopia.resources.host_memory",
+        "hooks.resources.host_memory",
         lambda: {"total_mb": 16024, "available_mb": 3230, "commit_available_mb": 1137},
     )
     await runtime.start("resume")
     assert engine.state["status"] == "RUNNING"
-    assert not runtime.memory_paused
+    assert not engine.state["metrics"]["memory_pressure"]
     await runtime.stop("pause")
 
 
 async def test_stopped_container_recovery_restores_last_workspace_snapshot(monkeypatch):
-    from utopia.config import ToolSettings
+    from backend.config import ToolSettings
 
     sandbox = DockerSandbox("stopped-recovery", ToolSettings())
     sandbox.started = True
@@ -582,3 +582,47 @@ async def test_clock_recovers_after_resource_error_without_lifetime_loss(engine)
     assert engine.state["status"] == "RUNNING"
     assert runtime.sandbox.killed == []
     assert engine.store.event_page(engine.state["id"], kind="runtime.recovered")
+
+
+async def test_startup_warms_embedding_before_residency_check(engine):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    engine.config.embedding_model = ModelSettings(model="embedding")
+    inference = SimpleNamespace(
+        warm=AsyncMock(return_value={}),
+        embeddings=AsyncMock(return_value=[[1.0]]),
+        verify_residency=AsyncMock(return_value={}),
+    )
+    runtime = Runtime(engine, inference)
+    await runtime.warm_models()
+    inference.embeddings.assert_awaited_once_with(engine.config.embedding_model, ["startup"])
+    verified = inference.verify_residency.await_args.args[0]
+    assert engine.config.embedding_model in verified
+
+
+async def test_failed_startup_cleans_sandbox_and_new_models(engine):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    old = ("http://localhost:11434", "existing")
+    new = ("http://localhost:11434", "new")
+    inference = SimpleNamespace(
+        manifest=AsyncMock(return_value={}),
+        loaded_models={old},
+        unload_models=AsyncMock(),
+    )
+    runtime = Runtime(engine, inference)
+    runtime.sandbox = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
+    runtime.observe = AsyncMock()
+
+    async def fail_warm():
+        inference.loaded_models.add(new)
+        raise RuntimeError("residency failed")
+
+    runtime.warm_models = fail_warm
+    with pytest.raises(RuntimeError, match="residency failed"):
+        await runtime.prepare()
+    runtime.sandbox.stop.assert_awaited_once()
+    inference.unload_models.assert_awaited_once_with({new})
+    assert runtime.clock_task is None

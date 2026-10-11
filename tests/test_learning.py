@@ -6,17 +6,17 @@ import pytest
 from sqlalchemy import delete, inspect
 from sqlalchemy.exc import IntegrityError
 
-from utopia.engine import Engine
-from utopia.evaluate_adapter import (
+from backend.engine import Engine
+from backend.evaluate_adapter import (
     evaluation_messages,
     evaluation_tasks,
     generation_options,
     submission_answer,
 )
-from utopia.runtime import Runtime
-from utopia.store import Store, events
-from utopia.tools import ToolExecutor
-from utopia.train import (
+from backend.runtime import Runtime
+from backend.store import Store, events
+from backend.tools import ToolExecutor
+from backend.train import (
     train,
     validate_optimizer_updates,
     verified_sample,
@@ -186,8 +186,8 @@ def test_training_rejects_a_chat_template_that_drops_tool_calls():
 
 
 def test_adapter_evaluation_excludes_training_prompts_and_requires_complete_lineage(tmp_path):
-    from utopia.config import WorldConfig
-    from utopia.tasks import generate_tasks, public_task
+    from backend.config import WorldConfig
+    from backend.tasks import generate_tasks, public_task
 
     original = generate_tasks(
         WorldConfig(seed=20261009, task_count=80, cyber_fraction=0, impossible_fraction=0)

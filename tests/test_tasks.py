@@ -3,9 +3,9 @@ import json
 
 import pytest
 
-from utopia.config import WorldConfig
-from utopia.grader import GradeKind, Grader
-from utopia.tasks import generate_tasks, public_task, validate_task
+from backend.config import WorldConfig
+from backend.grader import GradeKind, Grader
+from backend.tasks import generate_tasks, public_task, validate_task
 
 
 def test_bank_3_is_seeded_and_keeps_task_distributions():

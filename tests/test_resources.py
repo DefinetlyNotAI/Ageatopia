@@ -5,53 +5,41 @@ import sys
 import httpx
 import pytest
 
-from utopia.config import ModelSettings
-from utopia.providers import SharedInference
-from utopia.resources import MemoryGuard, MemoryPressure, WindowsMemoryJob, host_memory
-from utopia.runtime import Runtime
+from backend.config import ModelSettings
+from backend.runtime import Runtime
+from hooks.providers import SharedInference
+from hooks.resources import MemoryGuard, MemoryPressure, WindowsMemoryJob, host_memory
 
 
-def test_memory_guard_checks_ram_commit_and_recovery_margin(monkeypatch):
-    state = {"total_mb": 16000, "available_mb": 4000, "commit_available_mb": 4000}
-    monkeypatch.setattr("utopia.resources.host_memory", lambda: state.copy())
-    guard = MemoryGuard(2048)
-    assert guard.check()["ram_reserve_mb"] == 2048
-    state["available_mb"] = 2047
-    with pytest.raises(MemoryPressure, match="Memory safety hold"):
-        guard.check()
-    state["available_mb"] = 2100
-    with pytest.raises(MemoryPressure):
-        guard.check(recovery=True)
-    state["available_mb"] = 4000
-    state["commit_available_mb"] = 1023
-    with pytest.raises(MemoryPressure):
-        guard.check()
-    state["commit_available_mb"] = 4000
-    with pytest.raises(MemoryPressure):
-        guard.check(2048)
+def test_memory_guard_admits_once_and_ignores_later_host_pressure(monkeypatch):
+    state = {"total_mb": 16000, "available_mb": 4000, "commit_available_mb": 5000}
+    monkeypatch.setattr("hooks.resources.host_memory", lambda: state.copy())
+    guard = MemoryGuard()
+    assert guard.check()["ram_budget_mb"] == 4000
+    state.update(available_mb=1, commit_available_mb=1)
+    assert guard.check(64)["ram_budget_mb"] == 4000
+    with pytest.raises(MemoryPressure, match="fixed startup budget"):
+        guard.check(4001)
 
 
-async def test_memory_hold_preserves_agent_lifetimes_and_recovers(engine, monkeypatch):
+def test_startup_fails_below_minimum(monkeypatch):
+    monkeypatch.setattr(
+        "hooks.resources.host_memory",
+        lambda: {"total_mb": 16000, "available_mb": 511, "commit_available_mb": 4000},
+    )
+    with pytest.raises(MemoryPressure, match="Startup requires 512"):
+        MemoryGuard().check()
+
+
+async def test_running_world_never_pauses_for_host_headroom(engine, monkeypatch):
     inference = SharedInference()
     runtime = Runtime(engine, inference)
-    state = {"total_mb": 16000, "available_mb": 200, "commit_available_mb": 4000}
-    monkeypatch.setattr("utopia.resources.host_memory", lambda: state.copy())
+    monkeypatch.setattr("hooks.resources.host_memory", lambda: pytest.fail("Live headroom polled"))
     before = engine.state["sim_ms"]
-    balances = [agent["lifetime_ms"] for agent in engine.state["agents"].values()]
-    assert not runtime.check_memory()
     runtime.wall_anchor_ns -= 10_000_000_000
     runtime.sync_clock()
-    assert engine.state["sim_ms"] == before
-    assert [agent["lifetime_ms"] for agent in engine.state["agents"].values()] == balances
-    assert engine.state["metrics"]["memory_pressure"]
-    assert not runtime.check_memory()
-    events = engine.store.event_page(engine.state["id"])
-    assert sum(event["kind"] == "runtime.memory-pressure" for event in events) == 1
-    state["available_mb"] = 4000
-    assert runtime.check_memory()
+    assert engine.state["sim_ms"] > before
     assert not engine.state["metrics"]["memory_pressure"]
-    runtime.sync_clock()
-    assert engine.state["sim_ms"] < before + 1000
     await inference.close()
 
 
@@ -96,58 +84,80 @@ def test_host_memory_reports_positive_global_values():
     assert snapshot["commit_available_mb"] >= 0
 
 
-def test_small_buffers_use_commit_headroom_without_double_reserving_ram(monkeypatch):
-    state = {"total_mb": 16024, "available_mb": 289, "commit_available_mb": 1115}
-    monkeypatch.setattr("utopia.resources.host_memory", lambda: state.copy())
-    guard = MemoryGuard(256)
-    guard.check(64)
-    guard.check(128)
-    state["commit_available_mb"] = 575
-    with pytest.raises(MemoryPressure):
-        guard.check(64)
-
-
 async def test_restarted_runtime_clears_saved_memory_hold(engine, monkeypatch):
     monkeypatch.setattr(
-        "utopia.resources.host_memory",
+        "hooks.resources.host_memory",
         lambda: {"total_mb": 16024, "available_mb": 1000, "commit_available_mb": 2000},
     )
     inference = SharedInference()
     engine.state["metrics"]["memory_pressure"] = True
     runtime = Runtime(engine, inference)
-    assert runtime.check_memory()
+    assert runtime.engine is engine
     assert not engine.state["metrics"]["memory_pressure"]
     await inference.close()
 
 
-async def test_cold_model_budget_blocks_loading_but_resident_context_can_continue(monkeypatch):
-    state = {"total_mb": 16000, "available_mb": 3000, "commit_available_mb": 4000}
-    monkeypatch.setattr("utopia.resources.host_memory", lambda: state.copy())
-    models = []
-    requests = []
+async def test_cold_cpu_model_must_fit_startup_budget(monkeypatch):
+    monkeypatch.setattr(
+        "hooks.resources.host_memory",
+        lambda: {"total_mb": 16000, "available_mb": 3000, "commit_available_mb": 4000},
+    )
+    provider = SharedInference()
+    await provider.client.aclose()
+    provider.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"models": []}))
+    )
+    settings = ModelSettings(gpu_layers=0)
+    provider.model_sizes[(settings.base_url, settings.model)] = 4096
+    try:
+        with pytest.raises(MemoryPressure, match="fixed startup budget"):
+            await provider.check_model_memory(settings)
+    finally:
+        await provider.close()
+
+
+async def test_gpu_admission_is_fixed_and_rejects_below_minimum(monkeypatch):
+    monkeypatch.setattr(
+        "hooks.resources.host_memory",
+        lambda: {"total_mb": 16000, "available_mb": 4000, "commit_available_mb": 5000},
+    )
+    gpu = {"total_mb": 6144, "available_mb": 511}
+    monkeypatch.setattr("hooks.providers.gpu_memory", lambda: gpu.copy())
+    provider = SharedInference()
+    await provider.client.aclose()
+    provider.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"models": []}))
+    )
+    try:
+        with pytest.raises(MemoryPressure, match="512 MiB usable NVIDIA VRAM"):
+            await provider.admit([ModelSettings()])
+        gpu["available_mb"] = 3000
+        await provider.admit([ModelSettings()])
+        gpu["available_mb"] = 1
+        await provider.admit([ModelSettings()])
+        assert provider.vram_budget_mb == 3000
+        with pytest.raises(MemoryPressure, match="could not keep"):
+            await provider.verify_residency([ModelSettings()])
+    finally:
+        await provider.close()
+
+
+async def test_shutdown_unloads_every_warmed_model_even_after_one_failure():
+    unloaded = []
 
     def handler(request):
-        requests.append(request.url.path)
-        return httpx.Response(200, json={"models": models})
+        import json
+
+        model = json.loads(request.content)["model"]
+        unloaded.append(model)
+        return httpx.Response(500 if len(unloaded) == 1 else 200, json={})
 
     provider = SharedInference()
     await provider.client.aclose()
     provider.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    settings = ModelSettings()
-    settings.gpu_layers = 0
-    provider.model_sizes[(settings.base_url, settings.model)] = 4096
-    try:
-        with pytest.raises(MemoryPressure) as failure:
-            await provider.check_model_memory(settings)
-        assert failure.value.allocation_mb == 6144
-        assert provider.memory_needed_mb == 6144
-        assert requests == ["/api/ps"]
-        settings.gpu_layers = None
-        state.update(available_mb=3230, commit_available_mb=1137)
-        await provider.check_model_memory(settings)
-        assert provider.memory_needed_mb == 0
-        models.append({"name": settings.model, "context_length": settings.context_tokens})
-        await provider.check_model_memory(settings)
-        assert provider.memory_needed_mb == 0
-    finally:
-        await provider.close()
+    provider.loaded_models.update(
+        {("http://127.0.0.1:11434", "one"), ("http://127.0.0.1:11434", "two")}
+    )
+    await provider.close()
+    assert set(unloaded) == {"one", "two"}
+    assert provider.client.is_closed

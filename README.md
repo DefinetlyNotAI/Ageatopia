@@ -14,11 +14,11 @@ starts local Ollama when no server is already listening.
 The default is six agents sharing Qwen3.5:2B and one inference worker.
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+python -m venv dist/python/venv
+.\dist\python\venv\Scripts\Activate.ps1
 python -m pip install -r requirements.lock
 python -m pip install -e .
-docker build -t agent-utopia-world:1 sandbox
+docker build -t agent-utopia-world:1 src/hooks/sandbox
 ollama pull qwen3.5:2b
 ```
 
@@ -31,13 +31,13 @@ environment; use **Install dependencies**, **Build dashboard**, **Build sandbox 
 **Build native host**, and **Run diagnostics** before launching the application:
 
 ```powershell
-.\maintain.ps1
+.\src\scripts\maintain.ps1
 ```
 
 Launch the desktop application, which starts and manages its local services:
 
 ```powershell
-.\run.ps1
+.\src\scripts\run.ps1
 ```
 
 Closing the standalone desktop window gracefully pauses simulations, persists state,
@@ -45,84 +45,50 @@ removes owned Docker environments, and shuts down its servers. Existing servers 
 the configured backend/dashboard ports cause a visible error. An existing Ollama
 server is reused without changing its settings or taking ownership of it.
 The Windows WebView2 runtime is required. Building the C host requires Visual Studio
-Build Tools with the C compiler and Windows SDK; `native/build.ps1` retrieves the
+Build Tools with the C compiler and Windows SDK; `src/gui/native/build.ps1` retrieves the
 pinned Microsoft WebView2 SDK from NuGet. Desktop services bind only to loopback.
 
 The centralized terminal control room configures worlds, launches the desktop,
 controls simulation lifecycle, shows status and structured logs, and confirms erasure:
 
 ```powershell
-python -m utopia.control
+python -m gui.control
 ```
 
 `utopia-maintenance` and `utopia-control` are separate installed console commands.
 Desktop ports and the data directory are configured in `.data/desktop.json`; all three
 interfaces accept `--config PATH`. World settings remain strict configuration JSON.
-Logs are written under the configured data directory's `logs` folder.
+Logs are written under `dist/logs`. Source is organized into `src/gui` (dashboard,
+Windows host and operator UI), `src/backend` (API and simulation), `src/hooks`
+(inference and Docker integration), and `src/scripts` (launch/build/verification).
+Drizzle schema and migrations live in `db`. Persistent worlds, configuration and
+operator credentials remain in `.data`. Dependencies, build output, caches,
+logs, exports, training artifacts and inspection copies belong under `dist`.
+Run Python with `PYTHONPATH=src` and `PYTHONPYCACHEPREFIX=dist/cache/python`;
+the PowerShell entrypoints set these automatically.
 
-Desktop configuration also accepts `manage_ollama` (default `true`) and
-`ollama_cache_ram_mb` (default `1024`, range `0`–`16384`). The cache budget bounds
-the runner's host prompt cache through a process-local `LLAMA_ARG_CACHE_RAM` setting;
-it does not unload resident model weights or change global environment variables.
-Zero disables this cache. It applies only when the launcher starts its own Ollama
-server. Set `manage_ollama` to `false` when using an independently managed provider.
-Closing the standalone desktop unloads models and stops the Ollama server it owns.
-`run.ps1` first stops remaining processes tied to this checkout, including their
-descendants. It attempts an authenticated backend shutdown before forced cleanup.
-Closing the launched desktop stops its services, then runs `wsl --shutdown`; this
-also stops every other WSL distro and Docker's WSL backend. World termination alone
-does not shut down WSL. External Ollama and Docker Desktop processes are not killed.
+Resource admission happens once before work starts. The launcher uses all available
+RAM/commit as its fixed Windows Job Object budget, with a 512 MiB startup minimum.
+GPU-backed local models require at least 512 MiB usable NVIDIA VRAM. Models and
+contexts are warmed before the world clock starts, kept resident with `keep_alive=-1`,
+and checked against the startup budgets. If the required model set cannot stay loaded,
+startup fails. Low host free-memory percentages never freeze work or lifetime clocks.
+There is no round-robin scheduling added here.
 
-Memory safety is enabled by default. `ram_reserve_mb` in `.data/desktop.json`
-defaults to `256`; Windows commit headroom retains half this value (at least 512 MiB).
-New work is blocked when its additional budget would consume this emergency reserve.
-Small request buffers are budgeted against commit headroom without also requiring
-their full size in idle physical RAM. Explicit large CPU loads still require RAM.
-Resuming an existing sandbox checks a small 64 MiB buffer, rather than reserving its
-entire configured memory ceiling again. Local Ollama uses its own GPU-aware scheduler
-for automatic offloading; only explicit CPU-only models are checked against model file
-size plus a context allowance. Resident GPU-backed requests retain a 64 MiB host buffer,
-and automatic cold loads check a 128 MiB host buffer; local
-inference is serialized. Managed Ollama keeps at most one model and one parallel request.
-An existing external Ollama server is never reconfigured or forcibly unloaded.
+The Job Object is a commit ceiling, not an exclusive physical RAM reservation.
+Ollama allocates model/context RAM and VRAM; its API does not offer a transferable
+pool reserving every unused byte for future allocations. Startup budgets and resident
+models therefore cannot guarantee protection from unrelated applications exhausting
+memory. Actual allocation failures remain errors. The old `ram_reserve_mb` and
+`process_memory_mb` settings no longer determine runtime holds or the job ceiling.
 
-`process_memory_mb` defaults to `4096`. On Windows the launcher applies a shared Job
-Object limit to the private committed memory of its backend, dashboard, owned Ollama,
-native window, and their descendants, before allowing them to execute. The actual cap
-is not shrunk to the amount of free RAM: committed memory can use the paging file,
-and a ceiling is not an upfront reservation. The dashboard's JS heap is capped
-at 512 MiB. Docker retains its separate per-world RAM/no-swap limits. These limits do
-not cap unrelated programs, external Ollama, GPU memory, file-backed mappings, or the
-Docker/WSL VM as a whole; they cannot guarantee that other programs leave RAM free.
-
-While running, memory pressure holds new inference/tool calls and freezes agent lifetime
-clocks. Recovery requires another 128 MiB of commit and 64 MiB of RAM headroom to avoid cycling near the threshold.
-The launcher logs the hold/recovery and the GUI shows a memory safety notice.
-Direct backend launches also use the reserve (`UTOPIA_RAM_RESERVE_MB`, default 256),
-but the Windows process cap requires the desktop launcher. The RAM reserve accepts
-256 to 65536 MiB; the process cap accepts 512 to 65536 MiB. Linux uses host headroom checks and Docker limits;
-the Windows Job Object cap is Windows-only.
-
-For development, the backend can still run separately:
-
-```powershell
-python -m utopia.cli
-```
-
-Start the dashboard in another:
-
-```powershell
-cd dashboard
-npm ci
-npm run build
-npm start
-```
-
-Open [the observatory](http://127.0.0.1:3000), create a world and start the run.
-Both servers bind to loopback. The backend creates `.data/operator.token`.
-The dashboard reads that file on its server; it never sends the token to the
-browser. For a custom data directory set `UTOPIA_DATA` to the same absolute path
-for both servers. `UTOPIA_API_URL` changes the dashboard backend address.
+`manage_ollama` selects whether the launcher starts Ollama when no server exists.
+An existing server remains externally managed, but models warmed by Ageatopia are
+explicitly unloaded on backend shutdown, releasing their runners. Owned Ollama
+process trees are stopped as well. Closing the desktop stops Docker Desktop and its
+backend **before** `wsl --shutdown`, preventing Docker from restarting VmmemWSL.
+This stops Docker Desktop and all WSL distributions. World termination alone does
+not shut down Docker Desktop or WSL.
 
 ## World settings
 
@@ -150,7 +116,7 @@ remain outside world ownership and are not erased by this operation.
 Task counts must represent the requested impossible fraction exactly: the default
 80 tasks contain 72 solvable tasks and eight impossible tasks. Difficulty is an
 independent field. The fixed bank requires independently validated private
-answers and validator metadata; see `utopia/tasks.py` for the supported recipes.
+answers and validator metadata; see `src/backend/tasks.py` for the supported recipes.
 The bank includes 24 recipes across mathematics and cybersecurity, including
 linear systems, modular arithmetic, probability, statistics, determinants,
 compressed payloads, rotating XOR, log forensics and packet reconstruction.
@@ -264,9 +230,9 @@ Streamed inference records first output, model load,
 prompt evaluation and generation timings. Measure this machine using:
 
 ```powershell
-python -m utopia.latency --repeat 5
+python -m backend.latency --repeat 5
 # Explicitly unload the selected model before measuring cold warmup:
-python -m utopia.latency --cold --repeat 5
+python -m backend.latency --cold --repeat 5
 ```
 
 See [desktop verification and learning evaluation](docs/desktop-evidence.md).
@@ -291,7 +257,7 @@ model weights. LoRA training is a separate, explicitly invoked command:
 
 ```powershell
 python -m pip install -e '.[training]'
-python -m utopia.train --dataset trajectories.jsonl --model LOCAL_MODEL_PATH --output .data/adapter-1
+python -m backend.train --dataset trajectories.jsonl --model LOCAL_MODEL_PATH --output dist/training/adapter-1
 ```
 
 Hardware and model support determine whether training fits; use a separate GPU or
@@ -341,7 +307,7 @@ Compare an adapter with its unchanged base on held-out math answers before selec
 it for inference:
 
 ```powershell
-python -m utopia.evaluate_adapter --adapter .data/adapter-1 --training-data trajectories.jsonl --model LOCAL_MODEL_PATH --output .data/adapter-1-evaluation.json
+python -m backend.evaluate_adapter --adapter dist/training/adapter-1 --training-data trajectories.jsonl --model LOCAL_MODEL_PATH --output dist/training/adapter-1-evaluation.json
 ```
 
 Supply every training dataset in the adapter's lineage after `--training-data`.
@@ -372,7 +338,7 @@ remain exclusively in the grader. Keep this report separate from direct-problem
 checks and full simulation benchmarks.
 
 `GET /comparison` compares model/context outcomes across runs. For real provider
-benchmarks, run `python -m utopia.benchmark --models qwen3.5:2b qwen3.5:0.8b`.
+benchmarks, run `python -m backend.benchmark --models qwen3.5:2b qwen3.5:0.8b`.
 
 ### Deploying a saved adapter through Ollama
 
@@ -404,9 +370,9 @@ Tests are added after implementation, following the supplied plan.
 
 ```powershell
 python -m pytest
-python -m ruff check utopia sandbox tests
-python -m ruff format --check utopia sandbox tests
-cd dashboard
+python -m ruff check src tests
+python -m ruff format --check src tests
+cd src/gui/dashboard
 npm run typecheck
 npm run lint
 npm run build

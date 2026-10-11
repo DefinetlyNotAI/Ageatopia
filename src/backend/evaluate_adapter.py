@@ -1,0 +1,320 @@
+"""Offline base/adapter comparison using held-out, privately graded math tasks."""
+
+import argparse
+import hashlib
+import json
+import re
+import time
+from pathlib import Path
+
+from backend.config import WorldConfig
+from backend.grader import GradeKind, Grader
+from backend.paths import output_path
+from backend.tasks import generate_tasks, public_task
+from backend.tools import TOOLS
+
+
+def generation_options(tokenizer, max_output_tokens):
+    if tokenizer.eos_token_id is None:
+        raise ValueError("Evaluation requires a tokenizer end token")
+    return {
+        "do_sample": False,
+        "max_new_tokens": max_output_tokens,
+        "eos_token_id": tokenizer.eos_token_id,
+        "pad_token_id": (
+            tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+        ),
+    }
+
+
+def evaluation_messages(task, mode):
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Solve the problem directly for this offline check. Return exactly one task "
+                "tool call with operation=submit and the answer in its requested format. "
+                "You may express a short thought before the call. No other tools will execute."
+                if mode != "answers"
+                else "Solve the problem. Return only the requested expression."
+            ),
+        },
+        {"role": "user", "content": public_task(task)["prompt"]},
+    ]
+    if mode == "assigned-submissions":
+        messages[1]["content"] = "Request a mathematical task."
+        messages.extend(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "offline-assignment",
+                            "type": "function",
+                            "function": {"name": "task", "arguments": {"operation": "request"}},
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "name": "task",
+                    "tool_call_id": "offline-assignment",
+                    "content": json.dumps(public_task(task)),
+                },
+            ]
+        )
+    return messages
+
+
+def submission_answer(output):
+    match = re.search(r"<tool_call>\s*(.*?)\s*</tool_call>", output, re.DOTALL)
+    if not match or output.count("<tool_call>") != 1 or output.count("</tool_call>") != 1:
+        raise ValueError("Expected exactly one complete tool_call")
+    body = match[1].strip()
+    if body.startswith("<function="):
+        function = re.fullmatch(r"<function=task>\s*(.*?)\s*</function>", body, re.DOTALL)
+        if not function:
+            raise ValueError("Expected a task tool call")
+        parameters = r"<parameter=(operation|answer)>(.*?)</parameter>"
+        pairs = re.findall(parameters, function[1], re.DOTALL)
+        if (
+            len(pairs) != 2
+            or {name for name, _ in pairs} != {"operation", "answer"}
+            or re.sub(parameters, "", function[1], flags=re.DOTALL).strip()
+        ):
+            raise ValueError("Expected task submit with a string answer")
+        arguments = {name: value.strip() for name, value in pairs}
+        call = {"name": "task", "arguments": arguments}
+    else:
+        call = json.loads(body)
+    if not isinstance(call, dict) or set(call) != {"name", "arguments"} or call["name"] != "task":
+        raise ValueError("Expected a task tool call")
+    arguments = call["arguments"]
+    if (
+        not isinstance(arguments, dict)
+        or set(arguments) != {"operation", "answer"}
+        or arguments["operation"] != "submit"
+        or not isinstance(arguments["answer"], str)
+    ):
+        raise ValueError("Expected task submit with a string answer")
+    return arguments["answer"]
+
+
+def evaluation_tasks(adapter, training_data, model, seed, count):
+    manifest = json.loads((adapter / "manifest.json").read_text(encoding="utf-8"))
+    if manifest["model_version"] != model:
+        raise ValueError("Adapter base model must match the evaluation model")
+    digests = {hashlib.sha256(path.read_bytes()).hexdigest() for path in training_data}
+    parent = manifest
+    while parent:
+        if parent["dataset_version"] not in digests:
+            raise ValueError("Provide the dataset used by every adapter in this lineage")
+        parent = parent.get("parent_adapter")
+    rows = [
+        json.loads(line)
+        for path in training_data
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    if not rows or any(
+        set(row) - {"observed_task_prompts"}
+        != {"agent_id", "model_version", "context_version", "messages"}
+        for row in rows
+    ):
+        raise ValueError("Use the public training-data export")
+    training_prompts = set()
+    for row in rows:
+        if "observed_task_prompts" not in row and any(
+            message.get("role") == "user"
+            and message.get("content", "").startswith("Your earlier working notes:\n")
+            for message in row["messages"]
+        ):
+            raise ValueError(
+                "Summarized exports require observed task prompts for held-out exclusion"
+            )
+        prompts = row.get("observed_task_prompts", [])
+        if not isinstance(prompts, list) or any(not isinstance(prompt, str) for prompt in prompts):
+            raise ValueError("Observed task prompts must be a list of public prompt strings")
+        training_prompts.update(
+            prompt.split(" Submit one plain mathematical")[0] for prompt in prompts
+        )
+        for message in row["messages"]:
+            if message.get("role") != "tool" or message.get("name") != "task":
+                continue
+            try:
+                task = json.loads(message.get("content", ""))
+            except (ValueError, TypeError):
+                continue
+            if isinstance(task, dict) and "prompt" in task:
+                training_prompts.add(task["prompt"].split(" Submit one plain mathematical")[0])
+    bank = generate_tasks(
+        WorldConfig(seed=seed, task_count=80, cyber_fraction=0, impossible_fraction=0)
+    )
+    tasks = [task for task in bank if task["prompt"] not in training_prompts][:count]
+    if not 1 <= count <= 80 or len(tasks) != count:
+        raise ValueError("Choose 1–80 tasks with enough distinct held-out prompts")
+    return manifest, tasks
+
+
+def evaluate(args):
+    manifest, tasks = evaluation_tasks(
+        args.adapter, args.training_data, args.model, args.seed, args.count
+    )
+    if args.output.exists():
+        raise ValueError("Evaluation output already exists; preserve prior results")
+
+    import torch
+    from peft import PeftModel, prepare_model_for_kbit_training
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
+    decoding = generation_options(tokenizer, args.max_output_tokens)
+    if args.mode != "answers" and "<tool_call>" not in tokenizer.get_chat_template(tools=TOOLS):
+        raise ValueError("Submission evaluation requires a chat template using tool_call tags")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    quantization = manifest.get("base_quantization", "none")
+    model_options = {}
+    if quantization != "none":
+        if quantization not in {"nf4-double-fp16", "nf4-double-bf16"}:
+            raise ValueError("Unsupported adapter base quantization")
+        if device != "cuda":
+            raise ValueError("Four-bit evaluation requires CUDA and training-4bit dependencies")
+        if quantization == "nf4-double-bf16" and not torch.cuda.is_bf16_supported():
+            raise ValueError("BF16 evaluation requires a supported CUDA GPU")
+        model_options = {
+            "device_map": {"": 0},
+            "quantization_config": BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_compute_dtype=(
+                    torch.bfloat16 if quantization == "nf4-double-bf16" else torch.float16
+                ),
+            ),
+        }
+    base = AutoModelForCausalLM.from_pretrained(
+        args.model,
+        trust_remote_code=False,
+        torch_dtype=(
+            (torch.bfloat16 if quantization == "nf4-double-bf16" else torch.float16)
+            if device == "cuda"
+            else torch.float32
+        ),
+        **model_options,
+    )
+    if quantization == "none":
+        base = base.to(device)
+    else:
+        base = prepare_model_for_kbit_training(base, use_gradient_checkpointing=False)
+        if manifest.get("fp16_frozen_embeddings", False):
+            base.get_input_embeddings().to(dtype=torch.float16)
+    model = PeftModel.from_pretrained(base, args.adapter).eval()
+    grader = Grader()
+
+    def sample(task):
+        messages = evaluation_messages(task, args.mode)
+        text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+            **({"tools": TOOLS} if args.mode != "answers" else {}),
+        )
+        inputs = tokenizer(text, return_tensors="pt").to(device)
+        with torch.inference_mode():
+            tokens = model.generate(**inputs, **decoding)
+        output = tokenizer.decode(
+            tokens[0, inputs["input_ids"].shape[1] :], skip_special_tokens=True
+        ).strip()
+        try:
+            answer = submission_answer(output) if args.mode != "answers" else output
+        except ValueError as error:
+            return {
+                "task_id": task["id"],
+                "prompt": task["prompt"],
+                "output": output,
+                "answer": None,
+                "grade": GradeKind.MALFORMED,
+                "detail": str(error),
+            }
+        grade = grader.grade(task, answer)
+        if grade.kind == GradeKind.INFRASTRUCTURE:
+            raise RuntimeError(f"Grading failed for {task['id']}: {grade.detail}")
+        return {
+            "task_id": task["id"],
+            "prompt": task["prompt"],
+            "answer": answer,
+            "output": output,
+            "grade": grade.kind,
+        }
+
+    started = time.perf_counter()
+    with model.disable_adapter():
+        baseline = [sample(task) for task in tasks]
+    adapted = [sample(task) for task in tasks]
+    report = {
+        "schema_version": 1,
+        "model_version": args.model,
+        "adapter_version": manifest["adapter_version"],
+        "adapter_path": str(args.adapter.resolve()),
+        "adapter_weights_version": hashlib.sha256(
+            (args.adapter / "adapter_model.safetensors").read_bytes()
+        ).hexdigest(),
+        "training_objective": manifest.get("training_objective"),
+        "base_quantization": quantization,
+        "fp16_frozen_embeddings": manifest.get("fp16_frozen_embeddings", False),
+        "embedding_dtype": str(model.get_input_embeddings().weight.dtype),
+        "training_dataset_version": manifest["dataset_version"],
+        "seed": args.seed,
+        "task_count": len(tasks),
+        "mode": args.mode,
+        "context_protocol": (
+            "public-assignment-fixture-v1"
+            if args.mode == "assigned-submissions"
+            else "direct-problem-v1"
+        ),
+        "scope": (
+            "held-out single-turn math submissions; "
+            "no tool execution, cyber tasks or full simulation"
+            if args.mode != "answers"
+            else "held-out math answers; no tools, cyber tasks or full simulation"
+        ),
+        "decoding": decoding,
+        "device": device,
+        "evaluation_seconds": round(time.perf_counter() - started, 3),
+        "base_correct": sum(row["grade"] == GradeKind.CORRECT for row in baseline),
+        "adapter_correct": sum(row["grade"] == GradeKind.CORRECT for row in adapted),
+        "base": baseline,
+        "adapter": adapted,
+        "automatic_activation": False,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    return report
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--adapter", type=Path, required=True)
+    parser.add_argument("--training-data", type=Path, nargs="+", required=True)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--seed", type=int, default=20261009)
+    parser.add_argument("--count", type=int, default=12)
+    parser.add_argument("--max-output-tokens", type=int, default=128)
+    parser.add_argument(
+        "--mode", choices=["answers", "submissions", "assigned-submissions"], default="answers"
+    )
+    args = parser.parse_args()
+    args.output = output_path(args.output) if args.output else None
+    if not 1 <= args.max_output_tokens <= 1024:
+        parser.error("max-output-tokens must be between 1 and 1024")
+    report = evaluate(args)
+    print(
+        json.dumps({key: value for key, value in report.items() if key not in {"base", "adapter"}})
+    )
+
+
+if __name__ == "__main__":
+    main()

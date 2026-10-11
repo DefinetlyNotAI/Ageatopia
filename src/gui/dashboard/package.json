@@ -1,0 +1,41 @@
+{
+  "name": "agent-utopia-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node ../../scripts/gui.mjs dev",
+    "build": "node ../../scripts/gui.mjs build",
+    "start": "node ../../scripts/gui.mjs start",
+    "typecheck": "node ../../scripts/gui.mjs typecheck",
+    "lint": "node ../../scripts/gui.mjs lint",
+    "install:dependencies": "node ../../scripts/gui.mjs install",
+    "db:generate": "node ../../../dist/gui/dashboard/node_modules/drizzle-kit/bin.cjs generate --config drizzle.config.ts"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.1.0",
+    "drizzle-orm": "^0.45.4",
+    "highlight.js": "^11.12.0",
+    "katex": "^0.19.0",
+    "next": "^16.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "tailwindcss": "^4.1.0"
+  },
+  "overrides": {
+    "katex": "$katex"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "drizzle-kit": "^0.31.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.0.0",
+    "typescript": "^5.9.0"
+  }
+}

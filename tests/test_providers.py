@@ -4,8 +4,8 @@ import json
 import httpx
 import pytest
 
-from utopia.config import ModelSettings
-from utopia.providers import InferenceResult, SharedInference
+from backend.config import ModelSettings
+from hooks.providers import InferenceResult, SharedInference
 
 
 class DelayedLines(httpx.AsyncByteStream):
@@ -145,10 +145,13 @@ async def test_ollama_stream_http_error_is_propagated():
 async def test_warm_uses_empty_chat_and_returns_server_timings():
     async def handler(request):
         payload = json.loads(request.content)
+        if request.url.path == "/api/generate":
+            assert payload == {"model": "qwen3.5:2b", "keep_alive": 0}
+            return httpx.Response(200, json={"done": True})
         assert request.url.path == "/api/chat"
         assert payload["messages"] == []
         assert payload["stream"] is False
-        assert payload["keep_alive"] == "3m"
+        assert payload["keep_alive"] == -1
         assert payload["options"]["num_ctx"] == 4096
         assert payload["options"]["num_batch"] == 256
         assert payload["options"]["num_gpu"] == 12
@@ -180,6 +183,9 @@ async def test_ollama_embeddings_batch_without_truncation():
 
     async def handler(request):
         payload = json.loads(request.content)
+        if request.url.path == "/api/generate":
+            assert payload == {"model": "embeddinggemma:latest", "keep_alive": 0}
+            return httpx.Response(200, json={})
         assert request.url.path == "/api/embed"
         assert payload["model"] == "embeddinggemma:latest"
         assert payload["input"] == texts

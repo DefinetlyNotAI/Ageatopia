@@ -5,13 +5,13 @@ import uuid
 import httpx
 import pytest
 
-from utopia.config import ModelSettings, ToolSettings, WorldConfig
-from utopia.engine import Engine
-from utopia.providers import SharedInference
-from utopia.runtime import Runtime
-from utopia.sandbox import DockerSandbox, initial_workspace
-from utopia.tasks import generate_tasks
-from utopia.tools import TOOLS
+from backend.config import ModelSettings, ToolSettings, WorldConfig
+from backend.engine import Engine
+from backend.runtime import Runtime
+from backend.tasks import generate_tasks
+from backend.tools import TOOLS
+from hooks.providers import SharedInference
+from hooks.sandbox import DockerSandbox, initial_workspace
 
 pytestmark = [
     pytest.mark.integration,
@@ -86,7 +86,7 @@ async def test_real_docker_isolation_shared_files_process_termination_and_ctf():
         assert launched["process_id"] not in (await sandbox.rpc({"operation": "processes"})).get(
             "one", []
         )
-        from utopia.sandbox import SandboxUnavailable
+        from hooks.sandbox import SandboxUnavailable
 
         with pytest.raises(SandboxUnavailable, match="Session has ended"):
             await sandbox.execute("one", "echo should-not-start")

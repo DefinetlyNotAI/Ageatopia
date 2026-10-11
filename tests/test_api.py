@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from utopia.api import create_app
+from backend.api import create_app
 
 HEADERS = {"Authorization": "Bearer test-operator"}
 
@@ -35,9 +35,9 @@ def test_room_metadata_is_protected_and_excludes_file_contents(tmp_path):
 
 
 def test_live_snapshot_cursor_skips_historical_checkpoints_and_activity_is_recent(tmp_path):
-    from utopia.config import WorldConfig
-    from utopia.engine import Engine
-    from utopia.store import Store
+    from backend.config import WorldConfig
+    from backend.engine import Engine
+    from backend.store import Store
 
     store = Store.local(tmp_path)
     world = Engine.create(store, WorldConfig())
@@ -148,7 +148,7 @@ def test_run_presets_replay_repeat_and_economy_versioning(tmp_path):
 
 
 def test_start_without_docker_fails_closed_and_does_not_terminate(tmp_path, monkeypatch):
-    from utopia.sandbox import DockerSandbox, SandboxUnavailable
+    from hooks.sandbox import DockerSandbox, SandboxUnavailable
 
     async def unavailable(*args):
         raise SandboxUnavailable("Docker unavailable")
@@ -157,7 +157,7 @@ def test_start_without_docker_fails_closed_and_does_not_terminate(tmp_path, monk
         return {"hash": "model-digest", "model": "qwen3.5:2b"}
 
     monkeypatch.setattr(DockerSandbox, "start", unavailable)
-    from utopia.providers import SharedInference
+    from hooks.providers import SharedInference
 
     monkeypatch.setattr(SharedInference, "manifest", manifest)
     app = create_app(tmp_path, token="test-operator")
@@ -176,13 +176,13 @@ def test_world_delete_permanently_erases_records_and_owned_files_after_restart(
     async def no_container(*args, **kwargs):
         return b""
 
-    monkeypatch.setattr("utopia.api.DockerSandbox._docker", no_container)
+    monkeypatch.setattr("backend.api.DockerSandbox._docker", no_container)
     app = create_app(tmp_path, token="test-operator")
     with TestClient(app) as client:
         world = client.post("/runs", headers=HEADERS, json={}).json()
         identity = world["id"]
         other = client.post("/runs", headers=HEADERS, json={}).json()["id"]
-        owned = tmp_path / "worlds" / identity / "agents"
+        owned = Path(__file__).resolve().parents[1] / "dist" / "worlds" / identity / "agents"
         owned.mkdir(parents=True)
         (owned / "notebook.md").write_text("private memory")
         assert client.delete(f"/runs/{identity}", headers=HEADERS).status_code == 409
@@ -206,7 +206,7 @@ def test_running_world_must_be_paused_before_delete(tmp_path, monkeypatch):
     async def no_container(*args, **kwargs):
         return b""
 
-    monkeypatch.setattr("utopia.api.DockerSandbox._docker", no_container)
+    monkeypatch.setattr("backend.api.DockerSandbox._docker", no_container)
     app = create_app(tmp_path, token="test-operator")
     with TestClient(app) as client:
         identity = client.post("/runs", headers=HEADERS, json={}).json()["id"]
@@ -224,9 +224,10 @@ def test_running_world_must_be_paused_before_delete(tmp_path, monkeypatch):
 
 
 def test_sandbox_snapshot_opens_folder_without_host_execution_or_path_escape(tmp_path, monkeypatch):
+    monkeypatch.setattr("backend.api.DIST", tmp_path / "dist")
     opened = []
-    monkeypatch.setattr("utopia.api.sys.platform", "win32")
-    monkeypatch.setattr("utopia.api.os.startfile", lambda path: opened.append(path), raising=False)
+    monkeypatch.setattr("backend.api.sys.platform", "win32")
+    monkeypatch.setattr("backend.api.os.startfile", lambda path: opened.append(path), raising=False)
     app = create_app(tmp_path, token="test-operator")
     with TestClient(app) as client:
         world = client.post("/runs", headers=HEADERS, json={}).json()
@@ -261,9 +262,9 @@ def test_delete_removes_orphan_container_even_before_manifest_commit(tmp_path, m
         return b"orphan-id" if args[0] == "ps" else b""
 
     monkeypatch.setattr(
-        "utopia.api.shutil.which", lambda name: "docker" if name == "docker" else None
+        "backend.api.shutil.which", lambda name: "docker" if name == "docker" else None
     )
-    monkeypatch.setattr("utopia.api.DockerSandbox._docker", docker)
+    monkeypatch.setattr("backend.api.DockerSandbox._docker", docker)
     with TestClient(create_app(tmp_path, token="test-operator")) as client:
         world = client.post("/runs", headers=HEADERS, json={}).json()["id"]
         assert client.delete(f"/runs/{world}?confirm={world}", headers=HEADERS).status_code == 200
@@ -278,8 +279,8 @@ def test_delete_removes_orphan_workspace_volume_without_a_container(tmp_path, mo
         calls.append(args)
         return self.volume.encode() if args[:2] == ("volume", "ls") else b""
 
-    monkeypatch.setattr("utopia.api.shutil.which", lambda _: "docker")
-    monkeypatch.setattr("utopia.api.DockerSandbox._docker", docker)
+    monkeypatch.setattr("backend.api.shutil.which", lambda _: "docker")
+    monkeypatch.setattr("backend.api.DockerSandbox._docker", docker)
     with TestClient(create_app(tmp_path, token="test-operator")) as client:
         world = client.post("/runs", headers=HEADERS, json={}).json()["id"]
         assert client.delete(f"/runs/{world}?confirm={world}", headers=HEADERS).status_code == 200
@@ -296,8 +297,8 @@ def test_docker_startup_error_with_zero_cli_exit_is_not_ready(tmp_path, monkeypa
     async def create_process(*args, **kwargs):
         return Process()
 
-    monkeypatch.setattr("utopia.api.shutil.which", lambda _: "docker.exe")
-    monkeypatch.setattr("utopia.api.asyncio.create_subprocess_exec", create_process)
+    monkeypatch.setattr("backend.api.shutil.which", lambda _: "docker.exe")
+    monkeypatch.setattr("backend.api.asyncio.create_subprocess_exec", create_process)
     with TestClient(create_app(tmp_path, token="test-operator")) as client:
         result = client.get("/system", headers=HEADERS).json()
         assert result["docker_installed"]

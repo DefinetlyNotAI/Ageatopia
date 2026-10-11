@@ -19,22 +19,26 @@ training = ["torch>=2.6", "transformers>=4.50,<6", "peft>=0.15,<1", "datasets>=3
 training-4bit = ["bitsandbytes>=0.50.2,<0.51"]
 
 [project.scripts]
-utopia = "utopia.cli:main"
-utopia-desktop = "utopia.desktop:main"
-utopia-control = "utopia.control:main"
-utopia-maintenance = "utopia.maintenance:main"
+utopia = "backend.cli:main"
+utopia-desktop = "gui.desktop:main"
+utopia-control = "gui.control:main"
+utopia-maintenance = "gui.maintenance:main"
 
 [tool.setuptools.packages.find]
-include = ["utopia*"]
+where = ["src"]
+include = ["backend*", "gui*", "hooks*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["src"]
+cache_dir = "dist/cache/pytest"
 markers = ["integration: requires real Docker and Ollama; enable with UTOPIA_INTEGRATION=1"]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+cache-dir = "dist/cache/ruff"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]

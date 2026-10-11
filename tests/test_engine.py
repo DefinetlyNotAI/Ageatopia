@@ -6,11 +6,11 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
-from utopia.config import ContextProfile, Economy, ModelSettings, WorldConfig
-from utopia.engine import Engine
-from utopia.exports import export_run
-from utopia.grader import Grade, GradeKind, Grader, parse_math
-from utopia.tasks import generate_tasks, public_task, validate_task
+from backend.config import ContextProfile, Economy, ModelSettings, WorldConfig
+from backend.engine import Engine
+from backend.exports import export_run
+from backend.grader import Grade, GradeKind, Grader, parse_math
+from backend.tasks import generate_tasks, public_task, validate_task
 
 
 def first(engine):
@@ -575,3 +575,18 @@ def test_fixed_bank_cannot_label_missing_or_wrong_flag_solvable(files):
                 "files": files,
             }
         )
+
+
+def test_feeling_reward_uses_simulation_minute_cooldown(engine):
+    identity = first(engine)
+    agent = engine.agent(identity)
+    before = agent["lifetime_ms"]
+    assert engine.reflect(identity, "", "curious", "")["bonus_ms"] == 15_000
+    assert agent["lifetime_ms"] == before + 15_000
+    assert engine.reflect(identity, "", "happy", "")["bonus_ms"] == 0
+    engine.state["sim_ms"] += 59_999
+    assert engine.reflect(identity, "", "hopeful", "")["bonus_ms"] == 0
+    engine.state["sim_ms"] += 1
+    assert engine.reflect(identity, "", "hopeful", "")["bonus_ms"] == 15_000
+    engine.state["sim_ms"] += 60_000
+    assert engine.reflect(identity, "thinking", " ", "")["bonus_ms"] == 0

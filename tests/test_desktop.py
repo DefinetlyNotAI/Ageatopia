@@ -7,14 +7,15 @@ import httpx
 import pytest
 from textual.widgets import Button, Label, LoadingIndicator, RichLog, TextArea
 
-from utopia.control import ControlApp
-from utopia.desktop import LauncherMonitor, ProcessSupervisor, shutdown_wsl, validate_config
-from utopia.maintenance import MaintenanceApp
+from gui.control import ControlApp
+from gui.desktop import LauncherMonitor, ProcessSupervisor, shutdown_wsl, validate_config
+from gui.maintenance import MaintenanceApp
 
 
 def test_launcher_streams_new_service_errors_and_world_events(tmp_path, monkeypatch):
     from rich.console import Console
 
+    monkeypatch.setattr("gui.desktop.ROOT", tmp_path)
     output = io.StringIO()
     supervisor = ProcessSupervisor(validate_config({"data_dir": str(tmp_path)}))
     monitor = LauncherMonitor(supervisor, Console(file=output, width=200))
@@ -36,11 +37,9 @@ def test_launcher_streams_new_service_errors_and_world_events(tmp_path, monkeypa
             }
         ]
 
-    monkeypatch.setattr(
-        "utopia.desktop.OperatorApi", lambda config: SimpleNamespace(request=request)
-    )
+    monkeypatch.setattr("gui.desktop.OperatorApi", lambda config: SimpleNamespace(request=request))
     monitor.poll()
-    (tmp_path / "logs" / "backend.log").write_text(
+    (tmp_path / "dist" / "logs" / "backend.log").write_text(
         "normal tool activity\nERROR: service connection failed\n", encoding="utf-8"
     )
     monitor.poll()
@@ -131,7 +130,7 @@ async def test_maintenance_worker_failure_resets_busy(tmp_path, monkeypatch):
     app = MaintenanceApp(path)
     async with app.run_test() as pilot:
         monkeypatch.setattr(
-            "utopia.maintenance.subprocess.Popen",
+            "gui.maintenance.subprocess.Popen",
             lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("process failure")),
         )
         app._run_steps("Checking pip", [[sys.executable, "-m", "pip", "--version"]])
@@ -176,11 +175,11 @@ def test_managed_ollama_port_must_not_overlap_application():
 
 def test_external_ollama_is_never_adopted_or_stopped(tmp_path, monkeypatch):
     response = httpx.Response(200, request=httpx.Request("GET", "http://localhost/api/tags"))
-    monkeypatch.setattr("utopia.desktop.httpx.get", lambda *a, **kw: response)
+    monkeypatch.setattr("gui.desktop.httpx.get", lambda *a, **kw: response)
     supervisor = ProcessSupervisor(validate_config({"data_dir": str(tmp_path)}))
     monkeypatch.setattr(supervisor, "_spawn", lambda *a: pytest.fail("External server adopted"))
     monkeypatch.setattr(
-        "utopia.desktop.httpx.Client", lambda *a, **kw: pytest.fail("External server stopped")
+        "gui.desktop.httpx.Client", lambda *a, **kw: pytest.fail("External server stopped")
     )
     supervisor.start_ollama()
     supervisor.stop_services()
@@ -188,37 +187,38 @@ def test_external_ollama_is_never_adopted_or_stopped(tmp_path, monkeypatch):
     assert supervisor.status()["ollama"] == "external (not managed)"
 
 
-def test_process_cap_is_not_shrunk_to_current_free_ram(tmp_path, monkeypatch):
+def test_process_cap_uses_full_startup_budget(tmp_path, monkeypatch):
     supervisor = ProcessSupervisor(validate_config({"data_dir": str(tmp_path)}))
     caps = []
-    monkeypatch.setattr("utopia.desktop.os.name", "nt")
+    monkeypatch.setattr("gui.desktop.os.name", "nt")
     monkeypatch.setattr(
-        "utopia.resources.host_memory",
+        "hooks.resources.host_memory",
         lambda: {"total_mb": 16024, "available_mb": 900, "commit_available_mb": 1900},
     )
     monkeypatch.setattr(
-        "utopia.desktop.WindowsMemoryJob",
+        "gui.desktop.WindowsMemoryJob",
         lambda cap: caps.append(cap) or SimpleNamespace(spawn=lambda *a, **kw: "spawned"),
     )
     assert supervisor.spawn_limited(["service"]) == "spawned"
-    assert caps == [4096]
+    assert caps == [900]
 
 
 def test_desktop_shutdown_stops_wsl_with_bounded_wait(monkeypatch):
     from rich.console import Console
 
     commands = []
-    monkeypatch.setattr("utopia.desktop.os.name", "nt")
+    monkeypatch.setattr("gui.desktop.os.name", "nt")
     monkeypatch.setattr(
-        "utopia.desktop.subprocess.run",
+        "gui.desktop.subprocess.run",
         lambda command, **options: (
             commands.append((command, options)) or SimpleNamespace(returncode=0)
         ),
     )
     output = io.StringIO()
     shutdown_wsl(Console(file=output))
-    assert commands[0][0] == ["wsl.exe", "--shutdown"]
-    assert commands[0][1]["timeout"] == 30
+    assert commands[-1][0] == ["wsl.exe", "--shutdown"]
+    assert commands[-1][1]["timeout"] == 30
+    assert any("com.docker.backend.exe" in command for command, _ in commands[:-1])
     assert "WSL stopped" in output.getvalue()
 
 
@@ -232,8 +232,8 @@ def test_owned_ollama_receives_process_local_cache_budget(tmp_path, monkeypatch)
             raise value
         return value
 
-    monkeypatch.setattr("utopia.desktop.httpx.get", get)
-    monkeypatch.setattr("utopia.desktop.shutil_which", lambda _: "ollama")
+    monkeypatch.setattr("gui.desktop.httpx.get", get)
+    monkeypatch.setattr("gui.desktop.shutil_which", lambda _: "ollama")
     supervisor = ProcessSupervisor(
         validate_config({"data_dir": str(tmp_path), "ollama_cache_ram_mb": 512})
     )

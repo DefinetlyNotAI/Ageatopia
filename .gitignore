@@ -1,13 +1,5 @@
 PLAN.md
-.venv/
-__pycache__/
-.pytest_cache/
-.ruff_cache/
+dist/
 .data/
-dashboard/node_modules/
-dashboard/.next/
-dashboard/.env.local
+__pycache__/
 *.egg-info/
-*.tsbuildinfo
-native/.packages/
-native/build/
