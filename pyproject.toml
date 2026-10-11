@@ -33,6 +33,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
 cache_dir = "dist/cache/pytest"
+addopts = "--basetemp=dist/cache/pytest-workspaces"
 markers = ["integration: requires real Docker and Ollama; enable with UTOPIA_INTEGRATION=1"]
 
 [tool.ruff]
