@@ -187,6 +187,79 @@ def test_external_ollama_is_never_adopted_or_stopped(tmp_path, monkeypatch):
     assert supervisor.status()["ollama"] == "external (not managed)"
 
 
+@pytest.mark.parametrize("already_running", [False, True])
+def test_docker_start_waits_for_engine_and_retains_running_desktop(
+    tmp_path, monkeypatch, already_running
+):
+    supervisor = ProcessSupervisor(validate_config({"data_dir": str(tmp_path)}))
+    commands = []
+    probes = iter([0] if already_running else [1, 1, 0])
+    monkeypatch.setattr("gui.desktop.os.name", "nt")
+    monkeypatch.setattr("gui.desktop.shutil_which", lambda name: name)
+    monkeypatch.setattr("gui.desktop.time.sleep", lambda _: None)
+
+    def run(command, **options):
+        commands.append(command)
+        assert options["timeout"] > 0
+        assert options["creationflags"]
+        return SimpleNamespace(
+            returncode=next(probes) if command[1] == "info" else 0,
+            stderr="engine unavailable",
+            stdout="",
+        )
+
+    monkeypatch.setattr("gui.desktop.subprocess.run", run)
+    supervisor.start_docker()
+    starts = [command for command in commands if command[1:3] == ["desktop", "start"]]
+    assert len(starts) == (0 if already_running else 1)
+    assert commands[-1][1] == "info"
+
+
+def test_launcher_starts_docker_before_backend(tmp_path, monkeypatch):
+    next_cli = tmp_path / "dist/gui/dashboard/node_modules/next/dist/bin/next"
+    next_cli.parent.mkdir(parents=True)
+    next_cli.touch()
+    monkeypatch.setattr("gui.desktop.ROOT", tmp_path)
+    monkeypatch.setattr("gui.desktop.shutil_which", lambda name: name)
+    supervisor = ProcessSupervisor(
+        validate_config({"data_dir": str(tmp_path), "manage_ollama": False})
+    )
+    actions = []
+    monkeypatch.setattr(supervisor, "start_docker", lambda: actions.append("docker"))
+
+    def spawn(name, command, cwd, env):
+        assert env["OPENBLAS_NUM_THREADS"] == "1"
+        actions.append(name)
+
+    monkeypatch.setattr(supervisor, "_spawn", spawn)
+    monkeypatch.setattr(supervisor, "wait_ready", lambda **kw: None)
+    supervisor.start_services()
+    assert actions == ["docker", "backend", "dashboard"]
+
+
+@pytest.mark.parametrize("start_fails", [False, True])
+def test_docker_start_reports_failure_or_bounded_readiness_timeout(
+    tmp_path, monkeypatch, start_fails
+):
+    supervisor = ProcessSupervisor(validate_config({"data_dir": str(tmp_path)}))
+    times = iter([0, 0, 2])
+    monkeypatch.setattr("gui.desktop.os.name", "nt")
+    monkeypatch.setattr("gui.desktop.shutil_which", lambda name: name)
+    monkeypatch.setattr("gui.desktop.time.monotonic", lambda: next(times))
+    monkeypatch.setattr("gui.desktop.time.sleep", lambda _: None)
+    monkeypatch.setattr(
+        "gui.desktop.subprocess.run",
+        lambda command, **kw: SimpleNamespace(
+            returncode=1 if command[1] == "info" or start_fails else 0,
+            stderr="engine unavailable",
+            stdout="",
+        ),
+    )
+    error = RuntimeError if start_fails else TimeoutError
+    with pytest.raises(error, match="engine unavailable"):
+        supervisor.start_docker(timeout=1)
+
+
 def test_process_cap_uses_full_startup_budget(tmp_path, monkeypatch):
     supervisor = ProcessSupervisor(validate_config({"data_dir": str(tmp_path)}))
     caps = []

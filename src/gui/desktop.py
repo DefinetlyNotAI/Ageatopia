@@ -197,6 +197,51 @@ class ProcessSupervisor:
                 time.sleep(0.25)
         raise TimeoutError("Ollama did not become ready within 30 seconds")
 
+    def start_docker(self, timeout=90):
+        if os.name != "nt":
+            return
+        executable = shutil_which("docker")
+        if not executable:
+            raise RuntimeError("Install Docker Desktop before starting Agent Utopia")
+        options = dict(capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        deadline = time.monotonic() + timeout
+        started = False
+        last_error = "Docker engine unavailable"
+        while time.monotonic() < deadline:
+            try:
+                result = subprocess.run(
+                    [executable, "info", "--format", "{{.ServerVersion}}"], timeout=5, **options
+                )
+                if result.returncode == 0:
+                    self.logger.info("Docker engine is ready")
+                    if self.progress:
+                        self.progress("Docker engine is ready")
+                    return
+                last_error = (result.stderr or result.stdout).strip()
+            except subprocess.TimeoutExpired:
+                last_error = "Docker engine readiness check timed out"
+            except OSError as error:
+                raise RuntimeError(f"Docker could not start: {error}") from error
+            if not started:
+                if self.progress:
+                    self.progress("Starting Docker Desktop...")
+                try:
+                    result = subprocess.run(
+                        [executable, "desktop", "start", "--detach"], timeout=30, **options
+                    )
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    raise RuntimeError(f"Docker Desktop could not start: {error}") from error
+                if result.returncode:
+                    raise RuntimeError(
+                        "Docker Desktop could not start: "
+                        + (result.stderr or result.stdout).strip()
+                    )
+                started = True
+            time.sleep(0.5)
+        raise TimeoutError(
+            f"Docker engine did not become ready within {timeout} seconds: {last_error}"
+        )
+
     def start_services(self, progress=None):
         self.progress = progress
         if all(
@@ -217,10 +262,14 @@ class ProcessSupervisor:
         env["PYTHONPYCACHEPREFIX"] = str(ROOT / "dist" / "cache" / "python")
         env["PYTHONPATH"] = str(ROOT / "src")
         env["UTOPIA_DATA"] = str(self.data_dir)
-        env["UTOPIA_RAM_BUDGET_MB"] = str(self.memory_guard.check()["ram_budget_mb"])
-        env["NODE_OPTIONS"] = f"--max-old-space-size={self.memory_guard.check()['ram_budget_mb']}"
+        env["OPENBLAS_NUM_THREADS"] = "1"
         env["UTOPIA_API_URL"] = f"http://127.0.0.1:{self.config['backend_port']}"
         try:
+            self.start_docker()
+            env["UTOPIA_RAM_BUDGET_MB"] = str(self.memory_guard.check()["ram_budget_mb"])
+            env["NODE_OPTIONS"] = (
+                f"--max-old-space-size={self.memory_guard.check()['ram_budget_mb']}"
+            )
             if self.config["manage_ollama"]:
                 if progress:
                     progress("Connecting to Ollama...")
