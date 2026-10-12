@@ -1,0 +1,114 @@
+name: Deploy documentation to Wiki
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/deploy-wiki.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wiki-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Sync docs to GitHub Wiki
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify Wiki token
+        env:
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN }}
+        run: |
+          if [ -z "$WIKI_TOKEN" ]; then
+            echo "::error::Add a WIKI_TOKEN Actions secret with access to the repository Wiki."
+            exit 1
+          fi
+
+      - name: Clone Wiki
+        env:
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN }}
+        run: |
+          git -c credential.helper= clone \
+            "https://x-access-token:${WIKI_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" wiki
+          git -C wiki remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.wiki.git"
+
+      - name: Prepare Wiki pages
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import re
+          from urllib.parse import urlsplit
+
+          docs = pathlib.Path("docs")
+          wiki = pathlib.Path("wiki")
+          source_root = f"https://github.com/{__import__('os').environ['REPOSITORY']}/blob/main/"
+
+          def page_name(path):
+              return "Home" if path.as_posix() == "README.md" else path.with_suffix("").as_posix().replace("/", "-")
+
+          pages = {p.relative_to(docs).as_posix(): page_name(p.relative_to(docs))
+                   for p in docs.rglob("*.md") if p.is_file()}
+
+          def rewrite_links(text, current):
+              # Only rewrite ordinary Markdown links to other local documents.
+              def replace(match):
+                  destination = match.group(2)
+                  parsed = urlsplit(destination)
+                  if parsed.scheme or parsed.netloc or destination.startswith(("#", "/")):
+                      return match.group(0)
+                  path = (current.parent / parsed.path)
+                  import posixpath
+                  normalized = posixpath.normpath(path.as_posix())
+                  if normalized in pages:
+                      target = pages[normalized]
+                      if parsed.fragment:
+                          target += "#" + parsed.fragment
+                  else:
+                      target = source_root + posixpath.normpath("docs/" + normalized)
+                      if parsed.fragment:
+                          target += "#" + parsed.fragment
+                  return match.group(1) + target + match.group(3)
+              return re.sub(r'(\[[^\]]+\]\()([^\s)]+)(\))', replace, text)
+
+          for rel, name in pages.items():
+              raw = (docs / rel).read_text(encoding="utf-8")
+              (wiki / f"{name}.md").write_text(
+                  rewrite_links(raw, pathlib.PurePosixPath(rel)), encoding="utf-8"
+              )
+
+          # Wiki is generated entirely from docs/. Delete stale Markdown pages.
+          desired = {f"{name}.md" for name in pages.values()}
+          for old in wiki.glob("*.md"):
+              if old.name not in desired and old.name != "_Sidebar.md":
+                  old.unlink()
+
+          links = "\n".join(f"* [[{name}]]" for _, name in sorted(pages.items())
+                            if name != "Home")
+          (wiki / "_Sidebar.md").write_text("## Documentation\n\n" + links + "\n", encoding="utf-8")
+          PY
+
+      - name: Commit and publish
+        working-directory: wiki
+        env:
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki is already up to date."
+            exit 0
+          fi
+          git commit -m "docs: sync Wiki from main"
+          AUTH=$(printf 'x-access-token:%s' "$WIKI_TOKEN" | base64 -w 0)
+          git -c http.extraheader="AUTHORIZATION: basic $AUTH" push origin HEAD
