@@ -1,3 +1,7 @@
+> Historical record, archived on 2026-10-12. Paths, versions, measurements,
+> and completion claims describe their original snapshots. Use the
+> [current documentation](../README.md) for supported workflows.
+
 # Desktop rebuild evidence and learning evaluation
 
 Current status: implementation and full requirement audit completed on 2026-10-10.

@@ -1,75 +1,96 @@
-# Ageatopia architecture and execution decisions
+# Architecture
 
-The Python engine owns run state, time, allocation and the economy. State and
-versioned events commit together in a database transaction. A per-run lock orders
-expiration, collective deductions, submissions and assignments. Expiration at a
-timestamp occurs before an action at that timestamp. SQLite uses WAL; SQLAlchemy
-provides the Python database dialect boundary. The Next.js application declares
-the shared tables using Drizzle and reads through the authenticated operator API.
-Drizzle cannot execute Python transactions; using it as the Python ORM would
-require an additional database service, so Python uses SQLAlchemy.
+[Documentation index](README.md)
 
-Inference runs through one shared concurrency semaphore. Agent histories and
-exact delivered contexts remain separate. Queue waits are excluded from personal
-charges by default. Actual work charges, simulation time and wall time are stored
-separately. Context overflow stops inference visibly, or triggers an explicitly
-configured summarization without private metadata.
+Ageatopia separates the agent environment from the trusted operator system. Python
+owns simulation state and grading; the dashboard presents recorded state. A C
+Win32 host embeds the dashboard through WebView2.
 
-The only execution target for agent code is a disposable Docker container. Each
-world shares its bounded tmpfs filesystem, process namespace and loopback-only
-services. The container has no host mounts, network, Docker socket, operator token,
-database or grader code. A trusted supervisor runs outside the agent UID and
-records filesystem and process changes. Workspace snapshots are checkpointed
-outside the world and restored after recovery. No host execution fallback exists.
+## Components
 
-The independent grader operates on private task registries. Agent task views are
-explicit allowlists. Math uses bounded symbolic parsing and exact validation.
-Cybersecurity uses deterministic synthetic challenge artifacts and private flags.
-Infrastructure failures leave agents alive. Observations and classifications are
-separate; artifact interactions link to concrete modification events.
+```mermaid
+flowchart LR
+    Window[Native Windows host] --> Dashboard[Next.js observatory]
+    Dashboard --> API[FastAPI operator API]
+    API --> Engine[Python world engine]
+    Engine --> Store[(SQLite state and events)]
+    Engine --> Grader[Private grader]
+    Engine --> Inference[Shared inference queue]
+    Inference --> Provider[Ollama or compatible provider]
+    Engine --> Sandbox[Docker agent workspace]
+    Sandbox --> Observer[Trusted filesystem and process observer]
+    Observer --> Store
+    API --> Store
+```
 
-The dashboard proxies the backend on the server. The backend token never enters
-browser state or agent prompts. Both servers bind to loopback by default.
+| Area | Responsibility |
+| --- | --- |
+| [backend](../src/backend/) | API, lifecycle, economics, tasks, grading, persistence, exports, and offline training |
+| [hooks](../src/hooks/) | Provider contracts, resource admission, Docker execution, and observation |
+| [gui](../src/gui/) | Service supervision, control/maintenance TUIs, native host, and dashboard |
+| [scripts](../src/scripts/) | Windows entry points, dashboard build routing, and verification |
+| [db](../db/) | Drizzle schema and migrations for shared data definitions |
 
-## Rulings on conflicting plan statements
+## State and time
 
-- Replacement delay defaults to five simulated minutes: section 3 says one minute,
-  but section 15 and acceptance criterion 9 both require five. It is configurable.
-- Tests are written last, as explicitly required by section 15, overriding the
-  test-first skill workflow for this task.
-- The supplied PLAN.md is the accepted design and scope. No additional design
-  approvals are requested, following the user's explicit instruction.
-- Model thinking means only reasoning text actually returned by the provider.
-  The observer does not invent or claim access to undisclosed internal reasoning.
-- Training is optional and offline. It consumes approved public trajectories,
-  never hidden answers or task classifications; memory adaptation changes no weights.
+The engine stores time and lifetime deductions in integer milliseconds. A per-run
+lock orders actions; expiration precedes another action at an equal timestamp.
+State changes and versioned events commit together. SQLite runs in WAL mode, and
+Python transactions use SQLAlchemy. Drizzle supplies the mirrored TypeScript
+schema; it is not the engine's transaction coordinator.
 
-## Phase ledger
+Wall and deterministic clocks are configurable. Queue wait and model work are
+accounted separately. Pausing stops ongoing work; recovery resumes from durable
+state without charging offline wall time. A recovered identity is retained, while
+a replacement receives a new identity with explicit parent lineage.
 
-1. Configuration, schema and durable events: implemented; automated/API checks pass.
-2. Lifecycle, economy and time: implemented; automated checks pass, including subtick queue accounting.
-3. Autonomous tools, sandbox and grading: implemented; deterministic loop, real Ollama tool calling and real Docker isolation/recovery/CTF checks pass.
-4. Deterministic task bank and impossibility validation: implemented; generated and fixed-bank checks pass.
-5. Contexts, notebooks and respawning: implemented; automated separation/recovery checks pass.
-6. Dashboard, observation, replay and exports: implemented; browser, API, typecheck, lint and production build checks pass.
-7. Recovery, reproducibility and metrics: implemented; recovery/export tests pass and the local NVIDIA GPU is detected. The unchanged real six-agent acceptance gate passed. Sustained generational performance remains separate from that acceptance result.
-8. Optional offline training and comparison: implemented and exercised on the local GPU, including four-bit LoRA continuation and held-out comparisons. A continued adapter gained one answer over its base on each of two held-out task seeds, with low overall accuracy. The saved adapter was merged into a full GGUF model and ran through the application inference client on Ollama. A paired five-minute simulation completed zero tasks with either deployed model; live improvement remains unproven and automatic activation stays disabled.
+## Agent boundary
 
-The desktop rebuild adds a C Win32/WebView2 host, separate application and
-maintenance TUIs, live graphs, formatted agent content and live Explorer access.
-See desktop-evidence.md for rendered checks, measured inference timings, current
-acceptance results and retained negative training evidence. Earlier evidence.md
-entries describe their dated snapshots, not the current training status.
+Each world uses a disposable Docker container with a shared, size-bounded tmpfs
+workspace and separate unprivileged agent UIDs. Agent execution has no host shell
+fallback. The root filesystem is read-only; resources, output, and execution time
+are bounded. The container has no host bind mounts, external network, Docker
+socket, private database, operator token, or grader code.
 
-Real Docker/Ollama acceptance is a separate verification gate. Missing Docker must
-be reported as a blocker, never replaced by simulated production functionality.
+Agent-facing task and tool results use explicit public-field allowlists. The
+private grader distinguishes verified, incorrect, malformed, and infrastructure
+outcomes without disclosing hidden answers or impossibility classifications.
+Terminating an identity kills its owned programs, including detached descendants.
 
-Observer batches retain monotonic container IDs until the host commits them and
-acknowledges delivery. Durable cursors prevent duplicate records on retry. Process
-kernel process-event tracing supplements inventory snapshots, including short-lived children;
-command-session records are distinguished from process lifecycle observations.
-Trace storage is bounded and overflow pauses the world. Filesystem notifications
-can coalesce writes; content checkpoints capture observed versions, not every
-intermediate byte. Ordinary process visibility can reveal OS-level instrumentation;
-observer controls, records, credentials and grader internals are inaccessible to
-agent UIDs. See evidence.md for the practical limits of verification.
+Implementation: [engine.py](../src/backend/engine.py),
+[grader.py](../src/backend/grader.py), and [sandbox.py](../src/hooks/sandbox.py).
+
+## Inference and experience
+
+Requests share a concurrency limit while agent histories and exact delivered
+contexts remain distinct. Local models preload with their configured contexts
+before lifetime charging and request residency with `keep_alive=-1`. Admission
+checks do not reserve all physical memory; allocation errors remain visible.
+
+Notebook entries, outcome experience, reflections, and reported intentions are
+durable state. Retrieval uses relevant lexical/recent candidates and optional
+embedding ranking. Replacement notebook inheritance is configurable; unrelated
+identities' private notebooks and private grader data are excluded.
+
+Recorded reasoning is provider-returned text, and recorded feelings are agent
+self-reports. The application does not infer hidden thoughts. Context summaries
+preserve original history in events; context limits can stop an agent visibly.
+Offline LoRA is a separate, explicitly invoked workflow.
+
+## Observation and operator access
+
+The trusted observer records process events and filesystem notifications/content
+checkpoints outside the agent boundary. Batches are acknowledged after durable
+commit and deduplicated on retry. Overflow pauses a world visibly. Filesystem
+notifications may coalesce writes, so snapshots represent observed versions rather
+than a byte-by-byte record of every intermediate write.
+
+The dashboard server proxies authenticated API requests. The operator token stays
+server-side, outside browser state and agent prompts. Services bind to loopback;
+`/health` is public and operator routes require a bearer credential. Events support
+live observation, replay, and complete exports.
+
+The native host embeds the web renderer and provides native menus, DPI-aware
+sizing, and external-link handling. The dedicated compiled launcher supervises bundled
+backend, Node/dashboard, and native-host processes. See [releases](releases.md)
+for the deployment layout and [operations](operations.md) for shutdown ownership.

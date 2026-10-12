@@ -1,3 +1,7 @@
+> Historical record, archived on 2026-10-12. Paths, versions, measurements,
+> and completion claims describe their original snapshots. Use the
+> [current documentation](../README.md) for supported workflows.
+
 # Implementation and verification evidence
 
 Baseline verified locally on Windows 11 on 2026-10-08. Python 3.14, Node 26.8.1,
