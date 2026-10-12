@@ -74,7 +74,7 @@ def create_app(directory=None, store=None, token=None):
 
     app = FastAPI(
         title="Ageatopia operator API",
-        version="0.1.0",
+        version="1.0.0",
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,

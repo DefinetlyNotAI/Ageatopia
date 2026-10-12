@@ -1,7 +1,7 @@
 param([Alias('Version')][string]$v)
 
 $ErrorActionPreference = 'Stop'
-$root = $PSScriptRoot
+$root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $manifest = Get-Content -LiteralPath (Join-Path $root 'src/gui/dashboard/package.json') -Raw | ConvertFrom-Json
 if (-not $v -or $v -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?$') {
     Write-Host 'ERROR: Specify -v with a version such as 0.1.0 or 1.2.3-beta.' -ForegroundColor Red

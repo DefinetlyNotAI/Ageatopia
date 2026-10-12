@@ -2,7 +2,7 @@
 
 [Documentation index](README.md)
 
-[releases.ps1](../releases.ps1) builds four versioned packages through the existing
+[releases.ps1](../src/scripts/releases.ps1) builds four versioned packages through the existing
 maintenance-style Textual/Rich interface. It validates staging before publishing
 a release directory, with no manual packaging steps.
 
@@ -33,7 +33,7 @@ such as `1.2.3-beta` or `2.0.0-rc1`. It must exactly match
 [dashboard/package.json](../src/gui/dashboard/package.json).
 
 ```powershell
-.\releases.ps1 -v 1.2.3
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\src\scripts\releases.ps1 -v 1.2.3
 ```
 
 Replace `1.2.3` with the matching manifest version. Invalid/mismatched values fail
@@ -43,12 +43,12 @@ release; published directories are never updated in place.
 
 ## Package formats
 
-| Artifact | Contents and requirements |
-| --- | --- |
-| `Ageatopia-v<version>-Windows-x64.zip` | Nuitka standalone launcher/backend, native host, Node, production dashboard, sandbox context. No external Python/Node installation. WebView2 Runtime required. |
-| `Ageatopia-v<version>-Windows-x64-dev.zip` | Python source, native binaries, built dashboard/dependencies, `Setup.ps1`, `Start.ps1`. External Python/Node and first-run setup required. |
-| `Ageatopia-v<version>-py3-none-any.whl` | Backend/Python modules, pip-installable, without native host/dashboard assets. |
-| `Ageatopia-v<version>-Docker-Sandbox.zip` | Complete Dockerfile/context, supervisor, observer, patches, and build instructions. |
+| Artifact                                   | Contents and requirements                                                                                                                                      |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Ageatopia-v<version>-Windows-x64.zip`     | Nuitka standalone launcher/backend, native host, Node, production dashboard, sandbox context. No external Python/Node installation. WebView2 Runtime required. |
+| `Ageatopia-v<version>-Windows-x64-dev.zip` | Python source, native binaries, built dashboard/dependencies, `Setup.ps1`, `Start.ps1`. External Python/Node and first-run setup required.                     |
+| `Ageatopia-v<version>-py3-none-any.whl`    | Backend/Python modules, pip-installable, without native host/dashboard assets.                                                                                 |
+| `Ageatopia-v<version>-Docker-Sandbox.zip`  | Complete Dockerfile/context, supervisor, observer, patches, and build instructions.                                                                            |
 
 ZIP names retain the exact supplied version. Stable wheel versions retain the name
 above; suffix wheels use a pip-valid normalized version. For `1.2.3-beta`, the
