@@ -19,6 +19,9 @@ manifest.scripts = {
 };
 writeFileSync(join(output, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+// npm run exports .npmrc policies into the environment, which nested npm ci rejects.
+// Let child npm commands reload the policy from the original configuration files.
+delete process.env.npm_config_allow_scripts;
 if (action === "install" || !existsSync(join(output, "node_modules/next"))) {
   const result = spawnSync(npm, ["ci"], { cwd: output, stdio: "inherit", shell: process.platform === "win32" });
   if (result.status !== 0) process.exit(result.status || 1);
