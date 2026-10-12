@@ -1,7 +1,8 @@
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DIST = ROOT / "dist"
+DIST = Path(os.environ.get("AGEATOPIA_OUTPUT_DIR") or ROOT / "dist").expanduser().resolve()
 
 
 def output_path(value):

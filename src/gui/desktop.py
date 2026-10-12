@@ -16,9 +16,73 @@ from hooks.resources import MemoryGuard, WindowsMemoryJob
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = ROOT / ".data" / "desktop.json"
+PORTABLE_MODE = False
+USER_DATA_ROOT = None
 
 
-def load_config(path=DEFAULT_CONFIG):
+def configure_portable_runtime(app_root, user_data_root):
+    global ROOT, DEFAULT_CONFIG, PORTABLE_MODE, USER_DATA_ROOT
+
+    ROOT = Path(app_root).expanduser().resolve()
+    USER_DATA_ROOT = Path(user_data_root).expanduser().resolve()
+    DEFAULT_CONFIG = USER_DATA_ROOT / "desktop.json"
+    PORTABLE_MODE = True
+
+
+def data_root():
+    return USER_DATA_ROOT if PORTABLE_MODE else ROOT / ".data"
+
+
+def logs_root():
+    return data_root() / "logs" if PORTABLE_MODE else ROOT / "dist" / "logs"
+
+
+def dashboard_root():
+    return ROOT / "dashboard" if PORTABLE_MODE else ROOT / "dist" / "gui" / "dashboard"
+
+
+def sandbox_context():
+    return ROOT / "sandbox" if PORTABLE_MODE else ROOT / "src" / "hooks" / "sandbox"
+
+
+def service_environment():
+    env = os.environ.copy()
+    if PORTABLE_MODE:
+        for name in ("PYTHONPATH", "PYTHONHOME", "PYTHONPYCACHEPREFIX"):
+            env.pop(name, None)
+    else:
+        env["PYTHONPYCACHEPREFIX"] = str(ROOT / "dist" / "cache" / "python")
+        env["PYTHONPATH"] = str(ROOT / "src")
+    return env
+
+
+def show_startup_error(error):
+    message = f"Could not start Ageatopia: {error}"
+    try:
+        path = logs_root() / "launcher.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as log:
+            log.write(message + "\n")
+    except OSError:
+        pass
+
+    console_available = sys.stderr is not None
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            console_available = bool(ctypes.windll.kernel32.GetConsoleWindow())
+            if not console_available:
+                ctypes.windll.user32.MessageBoxW(None, message, "Ageatopia", 0x10)
+                return
+        except (AttributeError, OSError):
+            pass
+    if sys.stderr is not None:
+        print(message, file=sys.stderr)
+
+
+def load_config(path=None):
+    path = DEFAULT_CONFIG if path is None else path
     path = Path(path).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
@@ -28,7 +92,7 @@ def load_config(path=DEFAULT_CONFIG):
 
 def default_config():
     return {
-        "data_dir": str(ROOT / ".data"),
+        "data_dir": str(data_root()),
         "backend_port": 8000,
         "dashboard_port": 3000,
         "manage_ollama": True,
@@ -59,7 +123,7 @@ def validate_config(values, path=DEFAULT_CONFIG):
 
 
 def setup_logging(data_dir, name):
-    log_dir = ROOT / "dist" / "logs"
+    log_dir = logs_root()
     log_dir.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger(f"utopia.{name}")
     logger.setLevel(logging.INFO)
@@ -105,6 +169,7 @@ class ProcessSupervisor:
         self.memory_guard = MemoryGuard()
         self.memory_job = None
         self.window_started = False
+        self.window_closed = False
 
     def spawn_limited(self, command, **kwargs):
         state = self.memory_guard.check(128)
@@ -134,7 +199,8 @@ class ProcessSupervisor:
         self._assert_port_available(port)
         if self.progress:
             self.progress(f"Starting {name} on port {port}...")
-        log_file = open(ROOT / "dist" / "logs" / f"{name}.log", "ab", buffering=0)
+        self.logger.info("Starting %s: %s (working directory: %s)", name, command[0], cwd)
+        log_file = open(logs_root() / f"{name}.log", "ab", buffering=0)
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
             process = self.spawn_limited(
@@ -172,9 +238,7 @@ class ProcessSupervisor:
         executable = shutil_which("ollama")
         if not executable:
             raise RuntimeError("Install Ollama or set manage_ollama=false for an external provider")
-        env = os.environ.copy()
-        env["PYTHONPYCACHEPREFIX"] = str(ROOT / "dist" / "cache" / "python")
-        env["PYTHONPATH"] = str(ROOT / "src")
+        env = service_environment()
         env["OLLAMA_HOST"] = "127.0.0.1:11434"
         env["LLAMA_ARG_CACHE_RAM"] = str(self.config["ollama_cache_ram_mb"])
         env["OLLAMA_MAX_LOADED_MODELS"] = "16"
@@ -199,7 +263,7 @@ class ProcessSupervisor:
 
     def start_docker(self, timeout=90):
         if os.name != "nt":
-            return
+            return False
         executable = shutil_which("docker")
         if not executable:
             raise RuntimeError("Install Docker Desktop before starting Ageatopia")
@@ -216,7 +280,7 @@ class ProcessSupervisor:
                     self.logger.info("Docker engine is ready")
                     if self.progress:
                         self.progress("Docker engine is ready")
-                    return
+                    return True
                 last_error = (result.stderr or result.stdout).strip()
             except subprocess.TimeoutExpired:
                 last_error = "Docker engine readiness check timed out"
@@ -242,6 +306,32 @@ class ProcessSupervisor:
             f"Docker engine did not become ready within {timeout} seconds: {last_error}"
         )
 
+    def ensure_sandbox_image(self):
+        executable = shutil_which("docker")
+        if not executable:
+            raise RuntimeError("Docker CLI is unavailable")
+        options = dict(capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        inspect = subprocess.run(
+            [executable, "image", "inspect", "ageatopia-world:1"], timeout=30, **options
+        )
+        if inspect.returncode == 0:
+            self.logger.info("Ageatopia sandbox image is available")
+            return
+        context = sandbox_context()
+        if not (context / "Dockerfile").is_file():
+            raise RuntimeError(f"Sandbox Dockerfile is missing: {context / 'Dockerfile'}")
+        if self.progress:
+            self.progress("Building the Ageatopia sandbox image...")
+        result = subprocess.run(
+            [executable, "build", "-t", "ageatopia-world:1", str(context)],
+            timeout=600,
+            **options,
+        )
+        if result.returncode:
+            detail = (result.stderr or result.stdout).strip()
+            raise RuntimeError(f"Could not build the Ageatopia sandbox image: {detail}")
+        self.logger.info("Built the Ageatopia sandbox image")
+
     def start_services(self, progress=None):
         self.progress = progress
         if all(
@@ -251,23 +341,53 @@ class ProcessSupervisor:
             return
         if self.processes:
             self.stop_services()
-        node = shutil_which("node")
-        next_cli = (
-            ROOT / "dist" / "gui" / "dashboard" / "node_modules" / "next" / "dist" / "bin" / "next"
-        )
-        if not node or not next_cli.is_file():
+        dashboard = dashboard_root()
+        server = dashboard / "server.js"
+        next_cli = dashboard / "node_modules" / "next" / "dist" / "bin" / "next"
+        if PORTABLE_MODE:
+            node_path = ROOT / "runtime" / "node.exe"
+            node = str(node_path) if node_path.is_file() else None
+        else:
+            node = shutil_which("node")
+        if not node:
+            raise RuntimeError("Node.js is missing from the Ageatopia runtime.")
+        if PORTABLE_MODE and not server.is_file():
+            raise RuntimeError("The packaged dashboard server.js is missing.")
+        if not server.is_file() and not next_cli.is_file():
             raise RuntimeError(
                 "Dashboard dependencies are missing. Run ageatopia-maintenance first."
             )
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        env = os.environ.copy()
-        env["PYTHONPYCACHEPREFIX"] = str(ROOT / "dist" / "cache" / "python")
-        env["PYTHONPATH"] = str(ROOT / "src")
+        env = service_environment()
         env["UTOPIA_DATA"] = str(self.data_dir)
+        if PORTABLE_MODE:
+            env["AGEATOPIA_OUTPUT_DIR"] = str(self.data_dir / "outputs")
         env["OPENBLAS_NUM_THREADS"] = "1"
         env["UTOPIA_API_URL"] = f"http://127.0.0.1:{self.config['backend_port']}"
         try:
-            self.start_docker()
+            try:
+                docker_ready = self.start_docker()
+            except (OSError, RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
+                if not PORTABLE_MODE:
+                    raise
+                message = f"Docker unavailable; agent execution is disabled: {error}"
+                self.logger.warning(message)
+                if progress:
+                    progress(message)
+            else:
+                if PORTABLE_MODE and docker_ready:
+                    try:
+                        self.ensure_sandbox_image()
+                    except (
+                        OSError,
+                        RuntimeError,
+                        TimeoutError,
+                        subprocess.SubprocessError,
+                    ) as error:
+                        message = f"Sandbox image unavailable; agent execution may fail: {error}"
+                        self.logger.warning(message)
+                        if progress:
+                            progress(message)
             env["UTOPIA_RAM_BUDGET_MB"] = str(self.memory_guard.check()["ram_budget_mb"])
             env["NODE_OPTIONS"] = (
                 f"--max-old-space-size={self.memory_guard.check()['ram_budget_mb']}"
@@ -275,18 +395,43 @@ class ProcessSupervisor:
             if self.config["manage_ollama"]:
                 if progress:
                     progress("Connecting to Ollama...")
-                self.start_ollama()
+                try:
+                    self.start_ollama()
+                except (OSError, RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
+                    if not PORTABLE_MODE:
+                        raise
+                    message = f"Ollama unavailable; agent inference is disabled: {error}"
+                    self.logger.warning(message)
+                    if progress:
+                        progress(message)
             if progress:
                 progress("Starting backend and dashboard...")
+            backend_command = (
+                [
+                    str(ROOT / "Ageatopia.exe"),
+                    "--backend",
+                    "--port",
+                    str(self.config["backend_port"]),
+                ]
+                if PORTABLE_MODE
+                else [
+                    sys.executable,
+                    "-m",
+                    "backend.cli",
+                    "--port",
+                    str(self.config["backend_port"]),
+                ]
+            )
             self._spawn(
                 "backend",
-                [sys.executable, "-m", "backend.cli", "--port", str(self.config["backend_port"])],
+                backend_command,
                 ROOT,
                 env,
             )
-            self._spawn(
-                "dashboard",
-                [
+            dashboard_env = env.copy()
+            dashboard_command = [node, "server.js"]
+            if not server.is_file():
+                dashboard_command = [
                     node,
                     str(next_cli),
                     "start",
@@ -294,9 +439,15 @@ class ProcessSupervisor:
                     "127.0.0.1",
                     "--port",
                     str(self.config["dashboard_port"]),
-                ],
-                ROOT / "dist" / "gui" / "dashboard",
-                env,
+                ]
+            else:
+                dashboard_env["HOSTNAME"] = "127.0.0.1"
+                dashboard_env["PORT"] = str(self.config["dashboard_port"])
+            self._spawn(
+                "dashboard",
+                dashboard_command,
+                dashboard,
+                dashboard_env,
             )
             self.wait_ready(progress=progress)
         except BaseException:
@@ -408,11 +559,9 @@ class ProcessSupervisor:
     def launch_window(self):
         if "window" in self.processes and self.processes["window"][0].poll() is None:
             return
-        env = os.environ.copy()
-        env["PYTHONPYCACHEPREFIX"] = str(ROOT / "dist" / "cache" / "python")
-        env["PYTHONPATH"] = str(ROOT / "src")
+        env = service_environment()
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        log_file = open(ROOT / "dist" / "logs" / "window.log", "ab", buffering=0)
+        log_file = open(logs_root() / "window.log", "ab", buffering=0)
         try:
             process = subprocess.Popen(
                 native_command(f"http://127.0.0.1:{self.config['dashboard_port']}", self.data_dir),
@@ -472,12 +621,12 @@ class LauncherMonitor:
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
         for name in ("backend", "dashboard", "ollama"):
-            path = ROOT / "dist" / "logs" / f"{name}.log"
+            path = logs_root() / f"{name}.log"
             self.offsets[name] = path.stat().st_size if path.exists() else 0
 
     def poll(self):
         for name, offset in list(self.offsets.items()):
-            path = ROOT / "dist" / "logs" / f"{name}.log"
+            path = logs_root() / f"{name}.log"
             if not path.exists():
                 continue
             with path.open("rb") as log:
@@ -570,15 +719,24 @@ class LauncherMonitor:
 
 
 def native_command(url, data_dir):
-    executable = ROOT / "dist" / "native" / "build" / "ageatopia.exe"
+    executable = (
+        ROOT / "native" / "ageatopia.exe"
+        if PORTABLE_MODE
+        else ROOT / "dist" / "native" / "build" / "ageatopia.exe"
+    )
     if not executable.is_file():
+        if PORTABLE_MODE:
+            raise RuntimeError("Packaged native Ageatopia host is missing.")
         raise RuntimeError("Native C host is missing. Use Build native host in maintenance.")
     return [str(executable), "--url", url, "--data-dir", str(data_dir)]
 
 
 def open_window(url, data_dir, supervisor=None):
     spawn = supervisor.spawn_limited if supervisor else subprocess.Popen
-    with spawn(native_command(url, data_dir), cwd=ROOT) as process:
+    options = {"cwd": ROOT}
+    if PORTABLE_MODE:
+        options["env"] = service_environment()
+    with spawn(native_command(url, data_dir), **options) as process:
         if supervisor:
             supervisor.window_started = True
         try:
@@ -594,10 +752,12 @@ def open_window(url, data_dir, supervisor=None):
                                 raise RuntimeError(
                                     f"{name.title()} stopped unexpectedly "
                                     f"(exit code {entry[0].returncode}). "
-                                    f"See {ROOT / 'dist' / 'logs' / f'{name}.log'}"
+                                    f"See {logs_root() / f'{name}.log'}"
                                 ) from None
             if result:
                 raise RuntimeError(f"Native desktop host exited with code {result}")
+            if supervisor:
+                supervisor.window_closed = True
         finally:
             if process.poll() is None:
                 process.terminate()
@@ -669,14 +829,19 @@ def main():
                 progress=lambda message: console.log(message, style="cyan", markup=False)
             )
         console.print("[4/4] Opening desktop window", style="green")
-        console.log("Desktop ready. Service output is saved in", str(ROOT / "dist" / "logs"))
+        console.log("Desktop ready. Service output is saved in", str(logs_root()))
         monitor.thread.start()
         open_window(f"http://127.0.0.1:{config['dashboard_port']}", config["data_dir"], supervisor)
         console.log("Desktop window closed; shutting down local services", style="cyan")
     except (OSError, RuntimeError, TimeoutError) as error:
-        from rich.console import Console
+        if PORTABLE_MODE:
+            show_startup_error(error)
+        else:
+            from rich.console import Console
 
-        Console(stderr=True).print(f"Could not start Ageatopia: {error}", style="red", markup=False)
+            Console(stderr=True).print(
+                f"Could not start Ageatopia: {error}", style="red", markup=False
+            )
         raise SystemExit(1) from None
     except KeyboardInterrupt:
         pass
@@ -686,7 +851,8 @@ def main():
         try:
             supervisor.stop_services()
         finally:
-            shutdown_wsl(console)
+            if not PORTABLE_MODE or supervisor.window_closed:
+                shutdown_wsl(console)
 
 
 if __name__ == "__main__":

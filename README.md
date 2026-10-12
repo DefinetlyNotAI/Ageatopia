@@ -62,6 +62,46 @@ After upgrading an existing checkout, reinstall the editable Python package to
 register the `ageatopia` console commands, and rebuild the sandbox as
 `ageatopia-world:1`. Existing world settings retain their configured image tags.
 
+## Release packages
+
+Install the release build tools into the project environment and build the native
+host once using maintenance. On Windows x64 with Visual Studio C++ Build Tools,
+Node.js 22 or newer and npm available, run:
+
+```powershell
+.\dist\python\venv\Scripts\python.exe -m pip install -e ".[release]"
+.\releases.ps1 -v 0.1.0
+```
+
+The version must exactly match `src/gui/dashboard/package.json`. The release TUI
+uses the maintenance theme, selectable command output and progress indicator;
+Ctrl+T changes the theme and Ctrl+C copies a selection or cancels the build.
+Noninteractive runs stream the same build output and print the final artifact table.
+
+All builds and validation copies stay in `dist/releases/.staging/`. A release is
+published into `dist/releases/<version>/` only after all four packages validate.
+An existing destination, including an empty directory, is rejected. Dirty staging
+is also rejected rather than deleting another build's files. Failed or cancelled
+builds remove only their owned staging workspace.
+
+The Windows development ZIP contains Python source, the native host and a built
+standalone dashboard; install Python, Node, Docker Desktop and Ollama as needed,
+then run its `Setup.ps1` and `Start.ps1`. The compiled Windows ZIP contains a Nuitka
+standalone `Ageatopia.exe`, native host, dashboard and Node runtime. It needs no
+Python or Node installation. Double-click launches without a terminal; launching
+from a terminal attaches logs to that terminal. Writable settings and logs default
+to `%LOCALAPPDATA%/Ageatopia`. The Microsoft Edge WebView2 Runtime is required.
+Docker and Ollama are checked on launch; without them the observatory still opens,
+while local agent execution requires Docker and an available model provider.
+The sandbox image can be built automatically from the bundled Docker context.
+Optional model-training packages are not included in the compiled release.
+
+The wheel contains Python modules and excludes the native Windows host. Stable
+versions use `Ageatopia-v<version>-py3-none-any.whl`; suffix versions use a
+pip-valid normalized filename, such as `ageatopia-1.2.3b0-py3-none-any.whl` for
+`1.2.3-beta`, because a literal hyphenated version is not a valid wheel filename.
+The Docker Sandbox ZIP includes the full Docker build context and build instructions.
+
 The centralized terminal control room configures worlds, launches the desktop,
 controls simulation lifecycle, shows status and structured logs, and confirms erasure:
 
