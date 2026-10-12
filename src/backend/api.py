@@ -73,7 +73,7 @@ def create_app(directory=None, store=None, token=None):
                 database.engine.dispose()
 
     app = FastAPI(
-        title="Agent Utopia operator API",
+        title="Ageatopia operator API",
         version="0.1.0",
         lifespan=lifespan,
         docs_url=None,

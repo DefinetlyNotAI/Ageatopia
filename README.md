@@ -1,4 +1,4 @@
-# Agent Utopia
+# Ageatopia
 
 A local autonomous agent world, private grader and live operator observatory.
 Python owns simulation state; a native Windows WebView2 window hosts the responsive
@@ -18,7 +18,7 @@ py -3.11 -m venv dist/python/venv
 .\dist\python\venv\Scripts\Activate.ps1
 python -m pip install -r requirements.lock
 python -m pip install -e .
-docker build -t agent-utopia-world:1 src/hooks/sandbox
+docker build -t ageatopia-world:1 src/hooks/sandbox
 ollama pull qwen3.5:2b
 ```
 
@@ -48,6 +48,20 @@ The Windows WebView2 runtime is required. Building the C host requires Visual St
 Build Tools with the C compiler and Windows SDK; `src/gui/native/build.ps1` retrieves the
 pinned Microsoft WebView2 SDK from NuGet. Desktop services bind only to loopback.
 
+The EXE, window and browser icons use the hand-drawn `src/gui/native/ageatopia.svg`.
+The native build embeds its ICO as a Windows resource. To regenerate the checked-in
+icons after editing the SVG, run ImageMagick from the repository root:
+
+```powershell
+magick -background none src/gui/native/ageatopia.svg -define icon:auto-resize=256,128,64,48,32,24,16 src/gui/native/ageatopia.ico
+Copy-Item src/gui/native/ageatopia.svg src/gui/dashboard/app/icon.svg
+Copy-Item src/gui/native/ageatopia.ico src/gui/dashboard/app/favicon.ico
+```
+
+After upgrading an existing checkout, reinstall the editable Python package to
+register the `ageatopia` console commands, and rebuild the sandbox as
+`ageatopia-world:1`. Existing world settings retain their configured image tags.
+
 The centralized terminal control room configures worlds, launches the desktop,
 controls simulation lifecycle, shows status and structured logs, and confirms erasure:
 
@@ -55,7 +69,7 @@ controls simulation lifecycle, shows status and structured logs, and confirms er
 python -m gui.control
 ```
 
-`utopia-maintenance` and `utopia-control` are separate installed console commands.
+`ageatopia-maintenance` and `ageatopia-control` are separate installed console commands.
 Desktop ports and the data directory are configured in `.data/desktop.json`; all three
 interfaces accept `--config PATH`. World settings remain strict configuration JSON.
 Logs are written under `dist/logs`. Source is organized into `src/gui` (dashboard,
@@ -385,7 +399,7 @@ npm run build
 ```
 
 The repeatable Windows verification command runs unit tests and real Docker/Ollama
-checks against the existing `agent-utopia-world:1` image. It does not build or tag
+checks against the existing `ageatopia-world:1` image. It does not build or tag
 another image. Each real check removes its sandbox container and unloads the test
 model when it finishes, including failures:
 

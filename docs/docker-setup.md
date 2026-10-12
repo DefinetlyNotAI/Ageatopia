@@ -8,7 +8,7 @@ Checked on 2026-10-09 on this Windows 11 machine.
   `a9814e31049d66156477a86614e83365669677733014ec72f74229623ff3890a`.
 - Authenticode status was Valid, signed by Docker Inc.; installer exited 0.
 - WSL 2.7.13.0 is present and the Windows hypervisor is running.
-- Docker engine activation and the `agent-utopia-world:1` image build pass.
+- Docker engine activation and the `ageatopia-world:1` image build pass.
 
 ## Custom kernel preservation and upgrade
 
@@ -88,7 +88,7 @@ removed entirely, including their vulnerable vendored dependencies. Python and
 the C compiler remain available; installing Python packages inside the sandbox is
 no longer supported. Host application dependencies are unaffected.
 
-Built image `agent-utopia-world:1`:
+Built image `ageatopia-world:1`:
 `sha256:6e309dfd6100bfa9d587a6d699155ff36fc6ad06092717d647673a8f36f0ef51`.
 
 Two independent scans ran with all severities and unfixed findings included,
@@ -126,9 +126,9 @@ Scanner downloads were verified against their official release SHA256 checksums.
 Rebuild and rescan with installed scanners:
 
 ```powershell
-docker build --pull --no-cache -t agent-utopia-world:1 sandbox
-grype docker:agent-utopia-world:1 -o json --file .data/image-vulnerabilities-after.json --fail-on negligible
-trivy image --image-src docker --scanners vuln --format json --output .data/image-trivy-after.json --exit-code 1 agent-utopia-world:1
+docker build --pull --no-cache -t ageatopia-world:1 sandbox
+grype docker:ageatopia-world:1 -o json --file .data/image-vulnerabilities-after.json --fail-on negligible
+trivy image --image-src docker --scanners vuln --format json --output .data/image-trivy-after.json --exit-code 1 ageatopia-world:1
 $env:UTOPIA_INTEGRATION = '1'
 .\.venv\Scripts\python.exe -m pytest tests/test_integration.py -q
 ```
@@ -144,7 +144,7 @@ removing required tools or hiding the findings would not satisfy the request.
 
 ## Current sandbox image: security follow-up
 
-The expected local tag is `agent-utopia-world:1`. The image is built locally;
+The expected local tag is `ageatopia-world:1`. The image is built locally;
 Docker Hub has no public repository to pull under that name. Rebuild with the
 Windows setup command in README.md if this local tag is deleted.
 
@@ -200,11 +200,11 @@ calls, and a challenge was completed. The standard suite passed 61 tests.
 
 The sandbox image is local to Docker Desktop's `desktop-linux` engine. In Docker
 Desktop, open **Images** and select **Local**. Check the expected tag from a
-terminal with `docker image ls agent-utopia-world`. If the image store was reset
+terminal with `docker image ls ageatopia-world`. If the image store was reset
 or the tag was deleted, rebuild from the repository root:
 
 ```powershell
-docker build -t agent-utopia-world:1 sandbox
+docker build -t ageatopia-world:1 sandbox
 ```
 
 Keep this image even when Docker calls it unused: the application creates its
@@ -240,7 +240,7 @@ The subsequent cleanup removed the obsolete `security` tag, standalone Python
 build bases, an old test container, and two stopped world containers. The retained
 paused verification world's 30 workspace files are saved in the database; its
 container is recreated from that snapshot when resumed. Docker now retains only
-the current `agent-utopia-world:1` image, with no containers or build cache.
+the current `ageatopia-world:1` image, with no containers or build cache.
 
 The restored image was rechecked with all three real integrations passing in
 44.66 seconds, including successful workspace actions by all six default agents.

@@ -14,6 +14,8 @@ $loaderPath = Join-Path $sdkRoot "runtimes\win-x64\native\WebView2Loader.dll"
 $sourcePath = Join-Path $nativeRoot "ageatopia.c"
 $outputRoot = Join-Path $repository "dist/native/build"
 $outputPath = Join-Path $outputRoot "ageatopia.exe"
+$resourcePath = Join-Path $nativeRoot "ageatopia.rc"
+$resourceOutput = Join-Path $outputRoot "ageatopia.res"
 
 function Get-Sha256([string]$Path) {
     $algorithm = [System.Security.Cryptography.SHA256]::Create()
@@ -98,10 +100,11 @@ if (Test-Path -LiteralPath $outputPath) {
     Remove-Item -LiteralPath $outputPath -Force
 }
 
-$compileLine = 'cl.exe /nologo /TC /W4 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /I"{0}" /Fo"{1}\ageatopia.obj" /Fe"{2}" "{3}" /link /SUBSYSTEM:WINDOWS /LIBPATH:"{4}" WebView2Loader.dll.lib comctl32.lib comdlg32.lib ole32.lib shell32.lib user32.lib winhttp.lib' -f $includeRoot, $outputRoot, $outputPath, $sourcePath, $importLibraryRoot
+$resourceLine = 'rc.exe /nologo /I"{0}" /fo"{1}" "{2}"' -f $nativeRoot, $resourceOutput, $resourcePath
+$compileLine = 'cl.exe /nologo /TC /W4 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /I"{0}" /Fo"{1}\ageatopia.obj" /Fe"{2}" "{3}" /link "{5}" /SUBSYSTEM:WINDOWS /LIBPATH:"{4}" WebView2Loader.dll.lib comctl32.lib comdlg32.lib ole32.lib shell32.lib user32.lib winhttp.lib' -f $includeRoot, $outputRoot, $outputPath, $sourcePath, $importLibraryRoot, $resourceOutput
 
 if ($vcvarsPath) {
-    $commandLine = 'call "{0}" >nul && {1}' -f $vcvarsPath, $compileLine
+    $commandLine = 'call "{0}" >nul && {1} && {2}' -f $vcvarsPath, $resourceLine, $compileLine
     & $env:ComSpec /d /s /c $commandLine
     if ($LASTEXITCODE -ne 0) {
         throw "MSVC failed to build the x64 Ageatopia host."
@@ -111,7 +114,11 @@ if ($vcvarsPath) {
     if (-not $compiler) {
         throw "Visual Studio Build Tools with the x64 C++ workload were not found."
     }
-    & $compiler.Source /nologo /TC /W4 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 "/I$includeRoot" "/Fo$outputRoot\ageatopia.obj" "/Fe$outputPath" $sourcePath /link /SUBSYSTEM:WINDOWS "/LIBPATH:$importLibraryRoot" WebView2Loader.dll.lib comctl32.lib comdlg32.lib ole32.lib shell32.lib user32.lib winhttp.lib
+    & rc.exe /nologo "/I$nativeRoot" "/fo$resourceOutput" $resourcePath
+    if ($LASTEXITCODE -ne 0) {
+        throw "The Ageatopia icon resource could not be compiled."
+    }
+    & $compiler.Source /nologo /TC /W4 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 "/I$includeRoot" "/Fo$outputRoot\ageatopia.obj" "/Fe$outputPath" $sourcePath /link $resourceOutput /SUBSYSTEM:WINDOWS "/LIBPATH:$importLibraryRoot" WebView2Loader.dll.lib comctl32.lib comdlg32.lib ole32.lib shell32.lib user32.lib winhttp.lib
     if ($LASTEXITCODE -ne 0) {
         throw "MSVC failed to build the x64 Ageatopia host."
     }

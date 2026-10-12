@@ -1,4 +1,4 @@
-# Agent Utopia architecture and execution decisions
+# Ageatopia architecture and execution decisions
 
 The Python engine owns run state, time, allocation and the economy. State and
 versioned events commit together in a database transaction. A per-run lock orders

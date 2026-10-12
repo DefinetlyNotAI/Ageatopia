@@ -54,7 +54,7 @@ or authorship. Kernel process events and sampled process inventories are
 explicitly different event types. Ordinary process inspection can reveal OS
 instrumentation, although its controls/data remain protected.
 
-The mandatory Docker execution gate is now verified, and `agent-utopia-world:1`
+The mandatory Docker execution gate is now verified, and `ageatopia-world:1`
 has been built. The real six-agent smoke test checks task completion; the sustained
 benchmark and exported observations are still needed to demonstrate generational
 behavior and full acceptance. No sustained benchmark or training result is claimed.
@@ -97,7 +97,7 @@ The standard suite passes 61 tests with three integrations skipped; Ruff lint
 and format checks pass. The empty-provider-response regression verifies retry
 with backoff and unchanged history. No model actions or answers are fabricated.
 
-The current image is tagged `agent-utopia-world:1`; its nine reported
+The current image is tagged `ageatopia-world:1`; its nine reported
 binutils/strace findings are absent. Trivy and Grype both report zero findings
 after upgrading BusyBox to the checksum-verified, pinned upstream `1.39.0.git`
 revision with the remaining security patches applied. No custom ignores,

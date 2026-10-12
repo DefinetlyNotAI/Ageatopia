@@ -239,7 +239,7 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
     (!filter.task || e.task_id === filter.task) && (!filter.severity || e.severity === filter.severity)), [events, filter]);
 
   return <>
-    <header className="topbar"><Link className="brand" href="/">Agent Utopia <span>OBSERVATORY</span></Link>
+    <header className="topbar"><Link className="brand" href="/">Ageatopia <span>OBSERVATORY</span></Link>
       <div className="connection"><i className={connected ? "online" : ""} />{connected ? "Live stream" : "Awaiting connection"}</div></header>
     <div className="app-shell"><aside className="sidebar">
       <span className="eyebrow">LOCAL RESEARCH</span><h1>Worlds</h1>
@@ -261,7 +261,7 @@ export default function Dashboard({ initialNavigation = {} }: { initialNavigatio
       {notice && <p role="status" className="notice">{notice}</p>}
       {showSetup && config ? <WorldSetup config={config} setConfig={setConfig} system={system} presets={presets}
         busy={busy} onSubmit={create} savePreset={savePreset} /> : !run && (!system || selected) ? <p role="status">Loading world…</p> : !run ? <div className="empty">
-        <span className="eyebrow">AGENT UTOPIA</span><h2>A world, ready to observe.</h2>
+        <span className="eyebrow">AGEATOPIA</span><h2>A world, ready to observe.</h2>
         <p>Create a local world to begin. Agents act independently; the observatory records their experience.</p>
         <button className="primary" onClick={() => setShowSetup(true)}>Create the first world</button>
         {!system?.docker_ready && <p className="muted">Docker is required for all agent execution. {system?.docker_installed ? "Start Docker Desktop" : "Install Docker Desktop"} and build the world image before starting a run.</p>}

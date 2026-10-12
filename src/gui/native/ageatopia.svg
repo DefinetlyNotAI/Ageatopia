@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Ageatopia</title>
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="#233d31"/>
+  <path d="M36 155C48 197 177 212 217 118" fill="none" stroke="#688170" stroke-width="10" stroke-linecap="round"/>
+  <path d="M66 184 116 64h24l50 120h-29l-10-26h-48l-10 26Zm46-50h30l-15-39Z" fill="#e4ece4" fill-rule="evenodd"/>
+  <path d="M112 134h30l9 24h-48Z" fill="#68b88b"/>
+  <circle cx="44" cy="81" r="13" fill="#68b88b"/>
+  <circle cx="217" cy="118" r="13" fill="#d7b978"/>
+  <circle cx="87" cy="206" r="9" fill="#68b88b"/>
+</svg>

@@ -220,6 +220,6 @@ export function Inspector({ runId, agentId, live = false, onInspectAgent, onSele
 }
 
 export function AgentPage({ runId, agentId }: { runId: string; agentId: string }) {
-  return <><header className="topbar"><Link className="brand" href="/">Agent Utopia <span>OBSERVATORY</span></Link><span>Agent inspector</span></header>
+  return <><header className="topbar"><Link className="brand" href="/">Ageatopia <span>OBSERVATORY</span></Link><span>Agent inspector</span></header>
     <main className="detail-main"><Inspector key={`${runId}-${agentId}`} runId={runId} agentId={agentId} /></main></>;
 }

@@ -27,7 +27,7 @@ if (-not (Test-Path -LiteralPath $python)) {
 }
 
 & $python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
-if ($LASTEXITCODE -ne 0) { throw "Agent Utopia requires Python 3.11 or later." }
+if ($LASTEXITCODE -ne 0) { throw "Ageatopia requires Python 3.11 or later." }
 
 function Install-ProjectPython {
     param([string]$Title, [string[]]$PipArguments)
@@ -58,7 +58,7 @@ function Install-ProjectPython {
 }
 
 Install-ProjectPython -Title 'Python dependencies' -PipArguments @('install', '-r', (Join-Path $root 'requirements.lock'))
-Install-ProjectPython -Title 'Agent Utopia installation' -PipArguments @('install', '-e', $root)
+Install-ProjectPython -Title 'Ageatopia installation' -PipArguments @('install', '-e', $root)
 
 Push-Location $root
 try {

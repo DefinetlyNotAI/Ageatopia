@@ -57,7 +57,7 @@ class ToolSettings(StrictModel):
     cpu_count: float = Field(default=1, gt=0, le=8)
     pid_limit: int = Field(default=128, ge=32, le=1024)
     output_bytes: int = Field(default=32768, ge=1024, le=262144)
-    image: str = "agent-utopia-world:1"
+    image: str = "ageatopia-world:1"
 
 
 BASE_CONTEXT = (

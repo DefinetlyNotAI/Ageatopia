@@ -12,7 +12,7 @@ $env:TORCH_HOME = Join-Path $root "dist/cache/torch"
 New-Item -ItemType Directory -Path $env:TEMP -Force | Out-Null
 $python = Join-Path $root "dist\python\venv\Scripts\python.exe"
 if (-not $Arguments) { $Arguments = @() }
-Write-Host "Agent Utopia | Starting desktop" -ForegroundColor Cyan
+Write-Host "Ageatopia | Starting desktop" -ForegroundColor Cyan
 Write-Host "[1/4] Cleaning up previous Ageatopia processes..." -ForegroundColor DarkCyan
 
 if ($Arguments -notcontains "--window-only") {
@@ -92,14 +92,14 @@ if (-not (Test-Path -LiteralPath $python)) {
 }
 
 & $python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
-if ($LASTEXITCODE -ne 0) { throw "Agent Utopia requires Python 3.11 or later." }
+if ($LASTEXITCODE -ne 0) { throw "Ageatopia requires Python 3.11 or later." }
 
 & $python -c "import fastapi, textual"
 if ($LASTEXITCODE -ne 0) {
     & $python -m pip install -r (Join-Path $root "requirements.lock")
     if ($LASTEXITCODE -ne 0) { throw "Python dependency installation failed." }
     & $python -m pip install -e $root
-    if ($LASTEXITCODE -ne 0) { throw "Agent Utopia installation failed." }
+    if ($LASTEXITCODE -ne 0) { throw "Ageatopia installation failed." }
 }
 Write-Host "[3/4] Preparing local services..." -ForegroundColor DarkCyan
 

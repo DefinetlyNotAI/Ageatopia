@@ -12,6 +12,8 @@
 
 #include <wchar.h>
 
+#include "resource.h"
+
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -1627,6 +1629,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance, PWSTR comman
     windowClass.hInstance = instance;
     windowClass.lpfnWndProc = WindowProc;
     windowClass.hCursor = LoadCursorW(NULL, IDC_ARROW);
+    windowClass.hIcon = (HICON)LoadImageW(instance, MAKEINTRESOURCEW(IDI_AGEATOPIA),
+        IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED);
+    windowClass.hIconSm = (HICON)LoadImageW(instance, MAKEINTRESOURCEW(IDI_AGEATOPIA),
+        IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
     windowClass.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     windowClass.lpszClassName = APP_CLASS_NAME;
     if (!RegisterClassExW(&windowClass)) {

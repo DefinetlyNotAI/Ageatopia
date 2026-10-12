@@ -202,7 +202,7 @@ class ProcessSupervisor:
             return
         executable = shutil_which("docker")
         if not executable:
-            raise RuntimeError("Install Docker Desktop before starting Agent Utopia")
+            raise RuntimeError("Install Docker Desktop before starting Ageatopia")
         options = dict(capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
         deadline = time.monotonic() + timeout
         started = False
@@ -256,7 +256,9 @@ class ProcessSupervisor:
             ROOT / "dist" / "gui" / "dashboard" / "node_modules" / "next" / "dist" / "bin" / "next"
         )
         if not node or not next_cli.is_file():
-            raise RuntimeError("Dashboard dependencies are missing. Run utopia-maintenance first.")
+            raise RuntimeError(
+                "Dashboard dependencies are missing. Run ageatopia-maintenance first."
+            )
         self.data_dir.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env["PYTHONPYCACHEPREFIX"] = str(ROOT / "dist" / "cache" / "python")
@@ -646,7 +648,7 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
-    parser = argparse.ArgumentParser(description="Launch Agent Utopia as a native desktop app")
+    parser = argparse.ArgumentParser(description="Launch Ageatopia as a native desktop app")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--window-only", action="store_true")
     args = parser.parse_args()
@@ -674,9 +676,7 @@ def main():
     except (OSError, RuntimeError, TimeoutError) as error:
         from rich.console import Console
 
-        Console(stderr=True).print(
-            f"Could not start Agent Utopia: {error}", style="red", markup=False
-        )
+        Console(stderr=True).print(f"Could not start Ageatopia: {error}", style="red", markup=False)
         raise SystemExit(1) from None
     except KeyboardInterrupt:
         pass

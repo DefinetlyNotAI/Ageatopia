@@ -3,7 +3,7 @@ requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-utopia"
+name = "ageatopia"
 version = "0.1.0"
 description = "Local autonomous agent world and private research observer"
 requires-python = ">=3.11"
@@ -19,10 +19,10 @@ training = ["torch>=2.6", "transformers>=4.50,<6", "peft>=0.15,<1", "datasets>=3
 training-4bit = ["bitsandbytes>=0.50.2,<0.51"]
 
 [project.scripts]
-utopia = "backend.cli:main"
-utopia-desktop = "gui.desktop:main"
-utopia-control = "gui.control:main"
-utopia-maintenance = "gui.maintenance:main"
+ageatopia = "backend.cli:main"
+ageatopia-desktop = "gui.desktop:main"
+ageatopia-control = "gui.control:main"
+ageatopia-maintenance = "gui.maintenance:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

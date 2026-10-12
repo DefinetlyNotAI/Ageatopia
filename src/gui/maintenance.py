@@ -55,7 +55,7 @@ class SelectableRichLog(RichLog):
 
 
 class MaintenanceApp(App):
-    TITLE = "Agent Utopia · Maintenance"
+    TITLE = "Ageatopia · Maintenance"
     CSS = """
     Screen { layout: vertical; }
     #health {
@@ -208,7 +208,7 @@ class MaintenanceApp(App):
         elif action == "sandbox-build":
             self._run_steps(
                 "Building sandbox image",
-                [["docker", "build", "-t", "agent-utopia-world:1", "src/hooks/sandbox"]],
+                [["docker", "build", "-t", "ageatopia-world:1", "src/hooks/sandbox"]],
             )
         elif action == "native-build":
             self._run_steps("Building C Win32 host", [self._native_build_command()])
@@ -377,7 +377,7 @@ class MaintenanceApp(App):
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Install, repair, and diagnose Agent Utopia")
+    parser = argparse.ArgumentParser(description="Install, repair, and diagnose Ageatopia")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     args = parser.parse_args()
     MaintenanceApp(args.config).run()

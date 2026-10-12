@@ -20,7 +20,7 @@ class JsonFormatter(logging.Formatter):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Agent Utopia local operator server")
+    parser = argparse.ArgumentParser(description="Ageatopia local operator server")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
     handler = logging.StreamHandler()

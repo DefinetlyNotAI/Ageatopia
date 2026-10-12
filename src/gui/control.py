@@ -76,7 +76,7 @@ class DeleteWorldScreen(ModalScreen[str | None]):
 
 
 class ControlApp(App):
-    TITLE = "Agent Utopia · Control Room"
+    TITLE = "Ageatopia · Control Room"
     CSS = """
     Screen { layout: vertical; }
     #service-status { width: 1fr; height: 3; padding: 0 2; color: $text-muted; }
@@ -408,7 +408,7 @@ class ControlApp(App):
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Open the Agent Utopia control room")
+    parser = argparse.ArgumentParser(description="Open the Ageatopia control room")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     args = parser.parse_args()
     ControlApp(args.config).run()

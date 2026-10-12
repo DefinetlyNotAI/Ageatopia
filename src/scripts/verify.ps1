@@ -23,9 +23,9 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed.' }
     }
     if ($Suite -ne 'Unit') {
-        docker image inspect agent-utopia-world:1 --format '{{.Id}}'
+        docker image inspect ageatopia-world:1 --format '{{.Id}}'
         if ($LASTEXITCODE -ne 0) {
-            throw 'Build the sandbox once with: docker build -t agent-utopia-world:1 src/hooks/sandbox'
+            throw 'Build the sandbox once with: docker build -t ageatopia-world:1 src/hooks/sandbox'
         }
         $env:UTOPIA_INTEGRATION = '1'
         & $python -m pytest tests/test_integration.py -q
